@@ -3,8 +3,8 @@
 # 03-users.sh — Head Node: User Account Creation
 # Raspberry Pi 5 SLURM Cluster (pi-node0)
 #
-# Creates: munge (UID 64003), slurm (UID 64002), user (UID 2000)
-# CRITICAL: munge and slurm UIDs must be IDENTICAL across ALL cluster nodes.
+# Creates: munge (UID 900), slurm (UID 901), user (UID 1002), admin (UID 1000)
+# CRITICAL: these UIDs/GIDs must be IDENTICAL across ALL cluster nodes.
 #           Run this script on every node BEFORE installing munge/slurm packages.
 #           If packages are already installed, this script still checks consistency.
 #
@@ -28,16 +28,18 @@ die() { log "ERROR" "$*"; exit 1; }
 # =============================================================================
 # Configuration — these UIDs/GIDs must match on ALL cluster nodes
 # =============================================================================
-MUNGE_UID=64003
-MUNGE_GID=64003
-SLURM_UID=64002
-SLURM_GID=64002
-USER_UID=2000
-USER_GID=2000
+MUNGE_UID=900
+MUNGE_GID=900
+SLURM_UID=901
+SLURM_GID=901
+USER_UID=1002
+USER_GID=1002
 USER_NAME="user"
+ADMIN_UID=1000
+ADMIN_GID=1000
 ADMIN_NAME="admin"
 
-log "INFO" "=== Creating cluster user accounts ==="
+log "INFO" "=== Creating cluster user accounts on $(hostname) ==="
 
 # Helper: create a system group if it does not exist with a specific GID
 ensure_group() {
@@ -45,9 +47,8 @@ ensure_group() {
     if getent group "${gname}" &>/dev/null; then
         local existing_gid
         existing_gid=$(getent group "${gname}" | cut -d: -f3)
-        if [[ "${existing_gid}" != "${gid}" ]]; then
+        [[ "${existing_gid}" == "${gid}" ]] || \
             die "Group '${gname}' exists with GID ${existing_gid} but expected GID ${gid}. Fix manually."
-        fi
         log "INFO" "Group '${gname}' (GID ${gid}) already exists — skipping"
     else
         groupadd --gid "${gid}" "${gname}"
@@ -55,16 +56,24 @@ ensure_group() {
     fi
 }
 
+# Helper: assert an existing user has the expected UID and primary GID
+assert_user_ids() {
+    local uname="$1" uid="$2" gid="$3"
+    local existing_uid existing_gid
+    existing_uid=$(id -u "${uname}")
+    existing_gid=$(id -g "${uname}")
+    [[ "${existing_uid}" == "${uid}" ]] || \
+        die "User '${uname}' exists with UID ${existing_uid} but expected UID ${uid}. Fix manually."
+    [[ "${existing_gid}" == "${gid}" ]] || \
+        die "User '${uname}' exists with GID ${existing_gid} but expected GID ${gid}. Fix manually."
+}
+
 # Helper: create a system user if it does not exist
 ensure_system_user() {
     local uname="$1" uid="$2" gid="$3"
     if id "${uname}" &>/dev/null; then
-        local existing_uid
-        existing_uid=$(id -u "${uname}")
-        if [[ "${existing_uid}" != "${uid}" ]]; then
-            die "User '${uname}' exists with UID ${existing_uid} but expected UID ${uid}. Fix manually."
-        fi
-        log "INFO" "User '${uname}' (UID ${uid}) already exists — skipping"
+        assert_user_ids "${uname}" "${uid}" "${gid}"
+        log "INFO" "User '${uname}' (UID ${uid}, GID ${gid}) already exists — skipping"
     else
         useradd --uid "${uid}" --gid "${gid}" \
             --no-create-home \
@@ -90,12 +99,11 @@ ensure_system_user "slurm" "${SLURM_UID}" "${SLURM_GID}"
 # =============================================================================
 # Standard user account (for SLURM job execution)
 # =============================================================================
+ensure_group "${USER_NAME}" "${USER_GID}"
 if id "${USER_NAME}" &>/dev/null; then
-    log "INFO" "User '${USER_NAME}' already exists — skipping"
+    assert_user_ids "${USER_NAME}" "${USER_UID}" "${USER_GID}"
+    log "INFO" "User '${USER_NAME}' (UID ${USER_UID}, GID ${USER_GID}) already exists — skipping"
 else
-    if ! getent group "${USER_NAME}" &>/dev/null; then
-        groupadd --gid "${USER_GID}" "${USER_NAME}"
-    fi
     useradd --uid "${USER_UID}" \
             --gid "${USER_GID}" \
             --create-home \
@@ -107,10 +115,12 @@ else
 fi
 
 # =============================================================================
-# Admin user (verify it exists with sudo access)
+# Admin user (verify UID/GID and sudo access)
 # =============================================================================
+ensure_group "${ADMIN_NAME}" "${ADMIN_GID}"
 if id "${ADMIN_NAME}" &>/dev/null; then
-    log "INFO" "Admin user '${ADMIN_NAME}' exists"
+    assert_user_ids "${ADMIN_NAME}" "${ADMIN_UID}" "${ADMIN_GID}"
+    log "INFO" "Admin user '${ADMIN_NAME}' (UID ${ADMIN_UID}, GID ${ADMIN_GID}) exists"
     if groups "${ADMIN_NAME}" | grep -q "sudo"; then
         log "INFO" "User '${ADMIN_NAME}' already has sudo privileges"
     else
@@ -118,10 +128,14 @@ if id "${ADMIN_NAME}" &>/dev/null; then
         log "INFO" "Added '${ADMIN_NAME}' to sudo group"
     fi
 else
-    log "WARN" "Admin user '${ADMIN_NAME}' not found — it should have been created during OS installation"
-    log "WARN" "Creating admin user now (no password set — set one manually)"
-    useradd --create-home --shell /bin/bash --groups sudo "${ADMIN_NAME}"
-    log "INFO" "Run: sudo passwd admin"
+    log "WARN" "Admin user '${ADMIN_NAME}' not found — creating without password"
+    useradd --uid "${ADMIN_UID}" \
+            --gid "${ADMIN_GID}" \
+            --create-home \
+            --shell /bin/bash \
+            --groups sudo \
+            "${ADMIN_NAME}"
+    log "WARN" "Run: sudo passwd ${ADMIN_NAME}"
 fi
 
 # =============================================================================
@@ -134,5 +148,5 @@ for u in munge slurm "${USER_NAME}" "${ADMIN_NAME}"; do
     fi
 done
 
-log "INFO" "=== User creation complete ==="
+log "INFO" "=== User creation complete on $(hostname) ==="
 log "INFO" "Next step: sudo bash 04-chrony.sh"
