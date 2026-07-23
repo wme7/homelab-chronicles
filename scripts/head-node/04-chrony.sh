@@ -5,7 +5,7 @@
 #
 # Configures pi-node0 as the cluster's NTP server.
 # Upstream NTP: Debian pool + Cloudflare
-# Downstream clients: 192.168.1.0/24 (all cluster nodes)
+# Downstream clients: 192.168.129.0/24 (all cluster nodes)
 #
 # WHY THIS MATTERS: MUNGE credentials expire after 300 seconds.
 # Clock drift > ~5 minutes causes authentication failures cluster-wide.
@@ -52,7 +52,7 @@ pool 2.debian.pool.ntp.org iburst maxsources 4
 pool time.cloudflare.com   iburst maxsources 2
 
 # Allow all cluster nodes to query this server
-allow 192.168.1.0/24
+allow 192.168.129.0/24
 
 # Act as a time source of last resort (stratum 10 = low quality)
 # Compute nodes will still sync even if internet is unavailable

@@ -27,6 +27,9 @@ command -v chronyc &>/dev/null || die "chrony not installed. Run 01-base-system.
 
 log "INFO" "=== Configuring Chrony NTP client on $(hostname) ==="
 
+# =============================================================================
+# Write chrony configuration
+# =============================================================================
 CHRONY_CONF="/etc/chrony/chrony.conf"
 BACKUP="${CHRONY_CONF}.orig"
 
@@ -54,6 +57,11 @@ driftfile /var/lib/chrony/drift
 logdir /var/log/chrony
 CHRONY_EOF
 
+log "INFO" "Chrony configuration written to ${CHRONY_CONF}"
+
+# =============================================================================
+# Enable and start chrony
+# =============================================================================
 systemctl enable chrony
 systemctl restart chrony
 log "INFO" "Chrony restarted"
@@ -67,6 +75,9 @@ for i in $(seq 1 6); do
     fi
 done
 
+# =============================================================================
+# Verification
+# =============================================================================
 log "INFO" "Chrony sources:"
 chronyc sources -v 2>&1 | tee -a "${LOG_FILE}"
 
