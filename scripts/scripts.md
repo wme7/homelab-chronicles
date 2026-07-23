@@ -12,7 +12,7 @@ Run on **pi-node0** in order:
 | `02-network.sh` | Static IP (192.168.1.101), hostname, /etc/hosts |
 | `03-users.sh` | Create munge (UID 64003), slurm (UID 64002), user (UID 2000) |
 | `04-chrony.sh` | NTP server — serves 192.168.1.0/24, syncs from Debian pool |
-| `05-nfs-server.sh` | USB SSD mount, NFS exports for /shared and /home/user |
+| `05-nfs-server.sh` | USB SSD mount, bind mounts + NFS exports for /shared and /home/user |
 | `06-munge.sh` | Generate munge.key, distribute to compute nodes, verify |
 | `07-slurm-controller.sh` | Write slurm.conf + cgroup.conf, start slurmctld + slurmd |
 
