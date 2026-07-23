@@ -38,7 +38,7 @@ COMPUTE_NODES=("pi-node1" "pi-node2" "pi-node3")
 ALL_NODES=("pi-node0" "pi-node1" "pi-node2" "pi-node3")
 ADMIN_USER="admin"
 ADMIN_KEY="/home/admin/.ssh/id_ed25519"
-STORAGE_MOUNT="/shared"
+STORAGE_MOUNT="/mnt/storage"
 DRAIN_WAIT_SECONDS=300   # Max time to wait for jobs to complete
 FORCE_MODE=false
 
