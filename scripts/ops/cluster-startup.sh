@@ -10,7 +10,8 @@
 #   4. NFS mounts on compute nodes
 #   5. slurmctld on pi-node0
 #   6. slurmd on all nodes
-#   7. Verify cluster health
+#   7. Resume nodes left in DRAIN from prior shutdown/reboot
+#   8. Verify cluster health
 #
 # Run on pi-node0 as: sudo bash cluster-startup.sh
 # =============================================================================
@@ -54,14 +55,14 @@ is_reachable() {
 # =============================================================================
 # Step 1: Start MUNGE on pi-node0
 # =============================================================================
-log "INFO" "Step 1/7: Starting MUNGE on pi-node0..."
+log "INFO" "Step 1/8: Starting MUNGE on pi-node0..."
 systemctl start munge
 systemctl is-active --quiet munge && log "INFO" "  MUNGE: OK" || die "  MUNGE failed to start on pi-node0"
 
 # =============================================================================
 # Step 2: Mount USB SSD
 # =============================================================================
-log "INFO" "Step 2/7: Mounting USB SSD..."
+log "INFO" "Step 2/8: Mounting USB SSD..."
 if mountpoint -q "${STORAGE_MOUNT}"; then
     log "INFO" "  ${STORAGE_MOUNT}: already mounted"
 else
@@ -72,7 +73,7 @@ fi
 # =============================================================================
 # Step 3: Start NFS server
 # =============================================================================
-log "INFO" "Step 3/7: Starting NFS server on pi-node0..."
+log "INFO" "Step 3/8: Starting NFS server on pi-node0..."
 systemctl start nfs-kernel-server
 systemctl is-active --quiet nfs-kernel-server && log "INFO" "  NFS server: OK" || \
     die "  NFS server failed to start"
@@ -82,7 +83,7 @@ log "INFO" "  NFS exports refreshed"
 # =============================================================================
 # Step 4: Start MUNGE and mount NFS on compute nodes
 # =============================================================================
-log "INFO" "Step 4/7: Starting MUNGE and mounting NFS on compute nodes..."
+log "INFO" "Step 4/8: Starting MUNGE and mounting NFS on compute nodes..."
 for node in "${COMPUTE_NODES[@]}"; do
     log "INFO" "  Processing ${node}..."
     if ! is_reachable "${node}"; then
@@ -104,7 +105,7 @@ done
 # =============================================================================
 # Step 5: Start slurmctld on pi-node0
 # =============================================================================
-log "INFO" "Step 5/7: Starting slurmctld..."
+log "INFO" "Step 5/8: Starting slurmctld..."
 systemctl start slurmctld
 sleep 3
 systemctl is-active --quiet slurmctld && log "INFO" "  slurmctld: OK" || \
@@ -113,7 +114,7 @@ systemctl is-active --quiet slurmctld && log "INFO" "  slurmctld: OK" || \
 # =============================================================================
 # Step 6: Start slurmd on all nodes
 # =============================================================================
-log "INFO" "Step 6/7: Starting slurmd on all nodes..."
+log "INFO" "Step 6/8: Starting slurmd on all nodes..."
 
 # pi-node0 first
 systemctl start slurmd
@@ -132,9 +133,55 @@ for node in "${COMPUTE_NODES[@]}"; do
 done
 
 # =============================================================================
-# Step 7: Verify cluster health
+# Step 7: Resume nodes left in DRAIN from prior shutdown/reboot
 # =============================================================================
-log "INFO" "Step 7/7: Verifying cluster health..."
+log "INFO" "Step 7/8: Resuming SLURM nodes..."
+sleep 5  # let slurmd register with slurmctld
+
+if ! systemctl is-active --quiet slurmctld; then
+    warn "  slurmctld not active — skipping resume"
+else
+    for node in "${ALL_NODES[@]}"; do
+        if ! is_reachable "${node}"; then
+            warn "  ${node}: unreachable — leaving drained"
+            continue
+        fi
+
+        # Only resume if slurmd is actually running
+        if [[ "${node}" == "pi-node0" ]]; then
+            slurmd_ok=$(systemctl is-active slurmd 2>/dev/null || echo "failed")
+        else
+            slurmd_ok=$(remote_run "${node}" systemctl is-active slurmd 2>/dev/null | tr -d '\n' || echo "failed")
+        fi
+
+        if [[ "${slurmd_ok}" != "active" ]]; then
+            warn "  ${node}: slurmd not active — skipping resume"
+            continue
+        fi
+
+        state=$(scontrol show node "${node}" 2>/dev/null | grep -oP 'State=\K\S+' | head -1 || echo "UNKNOWN")
+        reason=$(scontrol show node "${node}" 2>/dev/null | grep -oP 'Reason=\K.*' | head -1 || true)
+
+        case "${state}" in
+            *DRAIN*|*DOWN*)
+                log "INFO" "  Resuming ${node} (was ${state}; reason: ${reason:-none})"
+                scontrol update NodeName="${node}" State=RESUME \
+                    && log "INFO" "  ${node}: RESUME issued" \
+                    || warn "  ${node}: RESUME failed"
+                ;;
+            *)
+                log "INFO" "  ${node}: already ${state} — no resume needed"
+                ;;
+        esac
+    done
+
+    sleep 5
+fi
+
+# =============================================================================
+# Step 8: Verify cluster health
+# =============================================================================
+log "INFO" "Step 8/8: Verifying cluster health..."
 sleep 10
 
 log "INFO" ""
@@ -152,12 +199,13 @@ for node in "${ALL_NODES[@]}"; do
         continue
     fi
 
-    MUNGE_STATUS=$(remote_run "${node}" systemctl is-active munge 2>/dev/null | tr -d '\n' || echo "failed")
-    SLURMD_STATUS=$(remote_run "${node}" systemctl is-active slurmd 2>/dev/null | tr -d '\n' || echo "failed")
-
     if [[ "${node}" == "pi-node0" ]]; then
+        MUNGE_STATUS=$(systemctl is-active munge 2>/dev/null | tr -d '\n' || echo "failed")
+        SLURMD_STATUS=$(systemctl is-active slurmd 2>/dev/null | tr -d '\n' || echo "failed")
         SLURMCTLD_STATUS=$(systemctl is-active slurmctld 2>/dev/null | tr -d '\n' || echo "failed")
     else
+        MUNGE_STATUS=$(remote_run "${node}" systemctl is-active munge 2>/dev/null | tr -d '\n' || echo "failed")
+        SLURMD_STATUS=$(remote_run "${node}" systemctl is-active slurmd 2>/dev/null | tr -d '\n' || echo "failed")
         SLURMCTLD_STATUS="N/A"
     fi
 
