@@ -28,13 +28,13 @@ die() { log "ERROR" "$*"; exit 1; }
 # Detect which node this is based on current hostname (if already set)
 # or set manually:
 #   NODE_NAME="pi-node1"
-#   NODE_IP="192.168.1.102"
+#   NODE_IP="192.168.129.37"
 
 CURRENT_HOSTNAME="$(hostname)"
 case "${CURRENT_HOSTNAME}" in
-    pi-node1) NODE_NAME="pi-node1"; NODE_IP="192.168.1.102" ;;
-    pi-node2) NODE_NAME="pi-node2"; NODE_IP="192.168.1.103" ;;
-    pi-node3) NODE_NAME="pi-node3"; NODE_IP="192.168.1.104" ;;
+    pi-node1) NODE_NAME="pi-node1"; NODE_IP="192.168.129.37" ;;
+    pi-node2) NODE_NAME="pi-node2"; NODE_IP="192.168.129.38" ;;
+    pi-node3) NODE_NAME="pi-node3"; NODE_IP="192.168.129.39" ;;
     *)
         # Auto-detection failed — must set manually
         log "WARN" "Cannot auto-detect node identity from hostname '${CURRENT_HOSTNAME}'"
@@ -44,14 +44,14 @@ case "${CURRENT_HOSTNAME}" in
 esac
 
 NETMASK="24"
-GATEWAY="192.168.1.1"
-DNS_SERVERS="8.8.8.8,8.8.4.4"
+GATEWAY="192.168.128.1"
+DNS_SERVERS="192.168.128.1"
 
 declare -A CLUSTER_NODES=(
-    ["pi-node0"]="192.168.1.101"
-    ["pi-node1"]="192.168.1.102"
-    ["pi-node2"]="192.168.1.103"
-    ["pi-node3"]="192.168.1.104"
+    ["pi-node0"]="192.168.129.36"
+    ["pi-node1"]="192.168.129.37"
+    ["pi-node2"]="192.168.129.38"
+    ["pi-node3"]="192.168.129.39"
 )
 
 log "INFO" "=== Configuring network for compute node ${NODE_NAME} (${NODE_IP}) ==="

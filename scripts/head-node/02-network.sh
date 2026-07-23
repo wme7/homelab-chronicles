@@ -25,17 +25,17 @@ die() { log "ERROR" "$*"; exit 1; }
 # Configuration — edit these values for your environment
 # =============================================================================
 NODE_NAME="pi-node0"
-NODE_IP="192.168.1.101"
+NODE_IP="192.168.129.36"
 NETMASK="24"
-GATEWAY="192.168.1.1"
-DNS_SERVERS="8.8.8.8,8.8.4.4"
+GATEWAY="192.168.128.1"
+DNS_SERVERS="192.168.128.1"
 
 # All cluster nodes (used for /etc/hosts)
 declare -A CLUSTER_NODES=(
-    ["pi-node0"]="192.168.1.101"
-    ["pi-node1"]="192.168.1.102"
-    ["pi-node2"]="192.168.1.103"
-    ["pi-node3"]="192.168.1.104"
+    ["pi-node0"]="192.168.129.36"
+    ["pi-node1"]="192.168.129.37"
+    ["pi-node2"]="192.168.129.38"
+    ["pi-node3"]="192.168.129.39"
 )
 
 log "INFO" "=== Configuring network for ${NODE_NAME} ==="
