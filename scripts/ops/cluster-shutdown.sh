@@ -37,7 +37,8 @@ die()  { log "ERROR" "$*"; exit 1; }
 COMPUTE_NODES=("pi-node1" "pi-node2" "pi-node3")
 ALL_NODES=("pi-node0" "pi-node1" "pi-node2" "pi-node3")
 ADMIN_USER="admin"
-STORAGE_MOUNT="/mnt/storage"
+ADMIN_KEY="/home/admin/.ssh/id_ed25519"
+STORAGE_MOUNT="/shared"
 DRAIN_WAIT_SECONDS=300   # Max time to wait for jobs to complete
 FORCE_MODE=false
 
@@ -51,7 +52,7 @@ done
 
 remote_run() {
     local node="$1"; shift
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "${ADMIN_USER}@${node}" "sudo $*" 2>&1 || true
+    ssh -i "${ADMIN_KEY}" -o BatchMode=yes -o ConnectTimeout=10 "${ADMIN_USER}@${node}" "sudo $*" 2>&1 || true
 }
 
 is_reachable() {
@@ -130,7 +131,8 @@ systemctl stop slurmctld 2>/dev/null && log "INFO" "  slurmctld stopped" || warn
 log "INFO" "Step 5/9: Unmounting NFS on compute nodes..."
 for node in "${COMPUTE_NODES[@]}"; do
     if is_reachable "${node}"; then
-        remote_run "${node}" "umount -l /shared /home/user 2>/dev/null || true"
+        #remote_run "${node}" "umount -l /shared /home/user 2>/dev/null || true"
+        remote_run "${node}" "umount -l /shared 2>/dev/null || true"
         log "INFO" "  ${node}: NFS unmounted"
     else
         warn "  ${node}: unreachable — cannot unmount NFS"

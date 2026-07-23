@@ -33,7 +33,8 @@ die()  { log "ERROR" "$*"; exit 1; }
 COMPUTE_NODES=("pi-node1" "pi-node2" "pi-node3")
 ALL_NODES=("pi-node0" "pi-node1" "pi-node2" "pi-node3")
 ADMIN_USER="admin"
-STORAGE_MOUNT="/mnt/storage"
+ADMIN_KEY="/home/admin/.ssh/id_ed25519"
+STORAGE_MOUNT="/shared"
 
 log "INFO" "====================================================="
 log "INFO" "  Starting pi-cluster"
@@ -42,7 +43,7 @@ log "INFO" "====================================================="
 # Helper: run command on remote node
 remote_run() {
     local node="$1"; shift
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "${ADMIN_USER}@${node}" "sudo $*" 2>&1
+    ssh -i "${ADMIN_KEY}" -o BatchMode=yes -o ConnectTimeout=10 "${ADMIN_USER}@${node}" "sudo $*" 2>&1
 }
 
 # Helper: check if a node is reachable

@@ -33,6 +33,7 @@ die()  { log "ERROR" "$*"; exit 1; }
 
 COMPUTE_NODES=("pi-node1" "pi-node2" "pi-node3")
 ADMIN_USER="admin"
+ADMIN_KEY="/home/admin/.ssh/id_ed25519"
 MODE="rolling"
 FORCE_MODE=false
 DRAIN_WAIT=180   # Max seconds to wait per node
@@ -57,7 +58,7 @@ done
 
 remote_run() {
     local node="$1"; shift
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "${ADMIN_USER}@${node}" "sudo $*" 2>&1
+    ssh -i "${ADMIN_KEY}" -o BatchMode=yes -o ConnectTimeout=10 "${ADMIN_USER}@${node}" "sudo $*" 2>&1
 }
 
 is_reachable() { ping -c1 -W3 "$1" &>/dev/null; }
