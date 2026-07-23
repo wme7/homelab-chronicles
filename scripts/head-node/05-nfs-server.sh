@@ -33,9 +33,9 @@ die() { log "ERROR" "$*"; exit 1; }
 STORAGE_MOUNT="/mnt/storage"
 SHARED_DIR="${STORAGE_MOUNT}/shared"
 USER_HOME_DIR="${STORAGE_MOUNT}/home/user"
-NFS_SUBNET="192.168.1.0/24"
+NFS_SUBNET="192.168.129.0/24"
 CLUSTER_USER="user"
-CLUSTER_USER_UID=2000
+CLUSTER_USER_UID=1002
 
 log "INFO" "=== Setting up NFS server ==="
 
