@@ -7,6 +7,9 @@
 #   /mnt/storage/shared      → /shared   (all nodes, rw)
 #   /mnt/storage/home/user   → /home/user (all nodes, rw)
 #
+# Also bind-mounts those directories to /shared and /home/user on pi-node0
+# so pathnames match compute nodes (pi-node0 participates as a compute node).
+#
 # The script locates the USB SSD by size (>= 900 GB), formats it if needed,
 # and adds a persistent fstab entry by UUID.
 #
@@ -33,6 +36,9 @@ die() { log "ERROR" "$*"; exit 1; }
 STORAGE_MOUNT="/mnt/storage"
 SHARED_DIR="${STORAGE_MOUNT}/shared"
 USER_HOME_DIR="${STORAGE_MOUNT}/home/user"
+LOCAL_SHARED="/shared"
+LOCAL_USER_HOME="/home/user"
+BIND_FSTAB_MARKER="# pi-cluster bind mounts"
 NFS_SUBNET="192.168.129.0/24"
 CLUSTER_USER="user"
 CLUSTER_USER_UID=1002
@@ -143,6 +149,41 @@ ls -la "${STORAGE_MOUNT}/"
 ls -la "${STORAGE_MOUNT}/home/" 2>/dev/null || true
 
 # =============================================================================
+# Bind-mount SSD paths to /shared and /home/user (head-as-compute path parity)
+# =============================================================================
+log "INFO" "Configuring bind mounts for ${LOCAL_SHARED} and ${LOCAL_USER_HOME}..."
+
+mkdir -p "${LOCAL_SHARED}"
+mkdir -p "${LOCAL_USER_HOME}"
+
+if grep -q "${BIND_FSTAB_MARKER}" /etc/fstab; then
+    log "INFO" "Bind mount fstab entries already exist — skipping"
+else
+    log "INFO" "Adding bind mount entries to /etc/fstab..."
+    cat >> /etc/fstab << FSTAB_EOF
+
+${BIND_FSTAB_MARKER}
+${SHARED_DIR}      ${LOCAL_SHARED}     none  bind,x-systemd.requires-mounts-for=${STORAGE_MOUNT}  0  0
+${USER_HOME_DIR}   ${LOCAL_USER_HOME}  none  bind,x-systemd.requires-mounts-for=${STORAGE_MOUNT}  0  0
+FSTAB_EOF
+    log "INFO" "fstab bind mounts updated"
+fi
+
+systemctl daemon-reload
+
+for mount_point in "${LOCAL_SHARED}" "${LOCAL_USER_HOME}"; do
+    if mountpoint -q "${mount_point}"; then
+        log "INFO" "${mount_point} is already mounted"
+    else
+        if mount "${mount_point}"; then
+            log "INFO" "Bind-mounted ${mount_point}"
+        else
+            die "Failed to bind-mount ${mount_point}"
+        fi
+    fi
+done
+
+# =============================================================================
 # Configure NFS exports
 # =============================================================================
 log "INFO" "Configuring NFS exports..."
@@ -184,6 +225,7 @@ df -h "${STORAGE_MOUNT}" | tee -a "${LOG_FILE}"
 
 log "INFO" "=== NFS server setup complete ==="
 log "INFO" "Exports: ${SHARED_DIR} and ${USER_HOME_DIR}"
+log "INFO" "Head-node bind mounts: ${LOCAL_SHARED} and ${LOCAL_USER_HOME}"
 log "INFO" "Clients should mount using:"
 log "INFO" "  pi-node0:${SHARED_DIR} /shared nfs defaults,_netdev,soft,timeo=30,retrans=3 0 0"
 log "INFO" "  pi-node0:${USER_HOME_DIR} /home/user nfs defaults,_netdev,soft,timeo=30,retrans=3 0 0"
