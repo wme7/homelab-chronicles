@@ -24,7 +24,7 @@ The following hardware has been acquired to build the cluster:
 - Produce a complete deployment guide in Markdown.
 - Provide a set of bash scripts ready to be used to set up the cluster.
 - Separate the scripts into two sets:
-  - one for the head node and controller node 0, and
+  - one for the head/controller node and compute node 0, and
   - one for the compute nodes 1, 2 and 3.
 - Provide instructions and scripts to shutdown the cluster.
 - Provide instructions and scripts to restart the cluster.
