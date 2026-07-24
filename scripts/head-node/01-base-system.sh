@@ -34,22 +34,25 @@ ARCH=$(uname -m)
 log "INFO" "=== Starting base system configuration for HEAD NODE ==="
 
 # =============================================================================
-# Enable memory cgroup (required for SLURM resource enforcement)
+# Memory cgroup (NOT required for current live config)
+# Live cluster uses CgroupPlugin=disabled / proctrack/linuxproc.
+# Leave cgroup_enable=memory out of cmdline.txt unless you later enable
+# cgroup job isolation (see documents/guide.md Future Improvements).
 # =============================================================================
-CMDLINE_FILE="/boot/firmware/cmdline.txt"
+# CMDLINE_FILE="/boot/firmware/cmdline.txt"
 
-if [[ ! -f "${CMDLINE_FILE}" ]]; then
-    die "Cannot find ${CMDLINE_FILE}. Is this a Raspberry Pi OS installation?"
-fi
+# if [[ ! -f "${CMDLINE_FILE}" ]]; then
+#     die "Cannot find ${CMDLINE_FILE}. Is this a Raspberry Pi OS installation?"
+# fi
 
-if grep -q "cgroup_enable=memory" "${CMDLINE_FILE}"; then
-    log "INFO" "cgroup_enable=memory already set in ${CMDLINE_FILE} — skipping"
-else
-    log "INFO" "Adding cgroup_enable=memory to ${CMDLINE_FILE}"
-    # cmdline.txt is a single line; append the option
-    sed -i 's/$/ cgroup_enable=memory/' "${CMDLINE_FILE}"
-    log "INFO" "cmdline.txt updated — reboot required before SLURM starts"
-fi
+# if grep -q "cgroup_enable=memory" "${CMDLINE_FILE}"; then
+#     log "INFO" "cgroup_enable=memory already set in ${CMDLINE_FILE} — skipping"
+# else
+#     log "INFO" "Adding cgroup_enable=memory to ${CMDLINE_FILE}"
+#     # cmdline.txt is a single line; append the option
+#     sed -i 's/$/ cgroup_enable=memory/' "${CMDLINE_FILE}"
+#     log "INFO" "cmdline.txt updated — reboot required before SLURM starts"
+# fi
 
 # =============================================================================
 # PCIe and NVMe configuration in config.txt
@@ -121,9 +124,10 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     e2fsprogs \
     util-linux
 
-log "INFO" "Installing SLURM packages..."
+log "INFO" "Installing SLURM packages and PMIx (MpiDefault=pmix)..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    slurm-wlm
+    slurm-wlm \
+    libpmix-dev
 
 # =============================================================================
 # Update EEPROM firmware (non-blocking — applies on next reboot)
@@ -174,4 +178,3 @@ fi
 
 log "INFO" "=== Base system configuration complete ==="
 log "INFO" "Next step: sudo bash 02-network.sh"
-log "WARN" "A reboot is recommended before continuing to apply cmdline.txt changes"

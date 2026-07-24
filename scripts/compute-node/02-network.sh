@@ -110,6 +110,17 @@ done
 
 log "INFO" "/etc/hosts written"
 
+# =============================================================================
+# Disable cloud-init so it cannot rewrite /etc/hosts on reboot
+# =============================================================================
+if [[ -f /etc/cloud/cloud-init.disabled ]]; then
+    log "INFO" "cloud-init already disabled — skipping"
+else
+    mkdir -p /etc/cloud
+    touch /etc/cloud/cloud-init.disabled
+    log "INFO" "Created /etc/cloud/cloud-init.disabled"
+fi
+
 # Verify head node reachability
 if ping -c1 -W3 pi-node0 &>/dev/null; then
     log "INFO" "Head node pi-node0 is reachable"

@@ -26,14 +26,17 @@ Community cluster builds confirm that the RPi5 is a capable compute node for sma
 
 - The RPi5 PCIe bus requires **explicit enabling** in `config.txt` when using non-official M.2 HAT+ adapters. The official Raspberry Pi M.2 HAT+ enables PCIe automatically, but third-party PoE + M.2 combo HATs do not.
 - PCIe Gen 3 mode (`dtparam=pciex1_gen=3`) is **unofficial but stable** with most commercial NVMe drives including the Transcend 256 GB M.2 2242. It roughly doubles sequential throughput compared to Gen 2.
-- Memory cgroup enforcement is **disabled by default** in Raspberry Pi OS Trixie. It must be explicitly enabled in the kernel command line (`cgroup_enable=memory`). As of kernel 6.12+, only cgroup v2 memory reporting is available; the legacy v1 `/proc/cgroups` interface is intentionally removed.
-- The NETGEAR GS305EPP delivers up to **120 W total PoE budget** (30 W per port). A fully-loaded RPi5 with M.2 + PoE HAT draws approximately **15–20 W** per node, leaving comfortable headroom.
+- **Critical PoE caveat:** When a PoE HAT is supplying power, **never connect the USB-C port** on the Pi 5 to another power supply at the same time. Dual power can damage the board or HAT. PoE is the sole power source.
+- The NETGEAR GS305EPP delivers up to **120 W total PoE budget** (30 W per port). Lower-numbered ports have PoE priority if the budget is contested. A fully-loaded RPi5 with M.2 + PoE HAT draws approximately **15–20 W** per node under heavy load.
+- Memory cgroup enforcement is **disabled by default** in Raspberry Pi OS Trixie. This cluster’s **live SLURM config does not use cgroup job isolation** (`CgroupPlugin=disabled`). Enabling `cgroup_enable=memory` is optional and reserved for a future cgroup-enforcement path (see Future Improvements).
 
 ### 1.2 SLURM on Debian Trixie
 
 - Debian Trixie ships **SLURM 24.11.5-4** in its official APT repository (`arm64` architecture supported). No compilation from source is required.
 - The `slurm-wlm` metapackage installs `slurmctld`, `slurmd`, and `slurm-client` in one step.
-- SLURM 24.x defaults to **cgroup v2** (`CgroupPlugin=autodetect`). On Debian Trixie (systemd 257+), delegation is handled by systemd automatically.
+- The **live working configuration** uses `ProctrackType=proctrack/linuxproc`, `TaskPlugin=task/affinity`, and `CgroupPlugin=disabled` (cgroup job isolation deferred). Install `libpmix-dev` because `MpiDefault=pmix`.
+- Raspberry Pi OS Lite has **no mail agent**. Without a stub at `/usr/local/bin/slurm-no-mail`, `slurmctld` fatals with `Configured MailProg is invalid`.
+- On this hardware, run **`slurmctld` as root** via a systemd override (`User=root` / `Group=root`); the package `slurm` user can hit privilege errors on start.
 - The `slurm` and `munge` system users must have **identical UIDs and GIDs** across every node before packages are installed. The recommended approach is to pre-create these users with explicit IDs before running `apt install`.
 
 ### 1.3 NVMe Boot on Raspberry Pi 5
@@ -46,7 +49,6 @@ Key EEPROM requirements for third-party M.2 HATs:
 | `PCIE_PROBE` | `1` | Force PCIe bus scan before boot device selection |
 | `dtparam=pciex1` | in `config.txt` | Enable the PCIe FFC interface |
 | `dtparam=pciex1_gen=3` | in `config.txt` | Unlock Gen 3 speeds (~900 MB/s vs ~450 MB/s) |
-| `cgroup_enable=memory` | in `cmdline.txt` | Enable memory cgroup for SLURM resource enforcement |
 
 **SD card fallback:** Using `BOOT_ORDER=0xf416` (NVMe first, SD last) allows recovery by re-inserting an SD card with a working OS image. Recommended for production.
 
@@ -63,13 +65,19 @@ Key EEPROM requirements for third-party M.2 HATs:
 | Issue | Impact | Workaround |
 |-------|--------|------------|
 | NVMe invisible at boot without `PCIE_PROBE=1` | Node fails to boot from NVMe | Set `PCIE_PROBE=1` in EEPROM |
-| Memory cgroup disabled by default | SLURM cannot enforce RAM limits | Add `cgroup_enable=memory` to `cmdline.txt` |
+| USB-C connected while PoE active | Hardware damage | Use PoE as the sole power source |
+| cloud-init rewrites `/etc/hosts` on reboot | Nodes lose name resolution | `sudo touch /etc/cloud/cloud-init.disabled` |
+| `MailProg is invalid` | `slurmctld` crashes on start | Create `/usr/local/bin/slurm-no-mail` stub |
+| `slurmctld` privilege errors | Controller fails to start | systemd override `User=root` / `Group=root` |
+| OpenMPI dual-stack / IPv6 hangs | MPI jobs hang or fail | `OMPI_MCA_btl_tcp_disable_family=6` |
+| PMIx missing | `srun` MPI errors | Install `libpmix-dev`; set `MpiDefault=pmix` |
 | `slurm`/`munge` UIDs differ across nodes | SLURM auth failures | Pre-create users with fixed UIDs before package install |
 | MUNGE key permissions too open | `munged` refuses to start | Ensure `chmod 0400 /etc/munge/munge.key`, owner `munge:munge` |
-| NFS mount hangs if NFS server not up | `slurmd` fails on compute nodes | Add `_netdev` option to fstab, use `nfs-client.target` ordering |
+| NFS mount hangs if NFS server not up | Boot / jobs hang | Add `_netdev` (and soft mounts) to fstab |
+| Power off pi-node0 while NFS still mounted | Stale NFS; workers hang | Unmount clients first; use `umount -l` if needed |
 | PoE HAT fan not controlled by OS | Node runs hot | Install `rpi-eeprom` firmware update; enable fan control overlay |
 | SLURM `slurm.conf` inconsistency | Jobs fail or are rejected | Copy **identical** `slurm.conf` to every node |
-| USB SSD filesystem not labelled | Device node changes on reboot | Mount by UUID or label, not by `/dev/sda` |
+| USB SSD device node changes on reboot | Mount fails | Mount by UUID; use `nofail` in fstab |
 
 ---
 
@@ -99,10 +107,10 @@ Internet / Home Network
 
 | Hostname  | IP Address     | Role                                           |
 |-----------|----------------|------------------------------------------------|
-| pi-node0  | 192.168.1.101  | Head node, SLURM controller, NFS server, compute |
-| pi-node1  | 192.168.1.102  | Compute node                                   |
-| pi-node2  | 192.168.1.103  | Compute node                                   |
-| pi-node3  | 192.168.1.104  | Compute node                                   |
+| pi-node0  | 192.168.129.36  | Head node, SLURM controller, NFS server, compute |
+| pi-node1  | 192.168.129.37  | Compute node                                   |
+| pi-node2  | 192.168.129.38  | Compute node                                   |
+| pi-node3  | 192.168.129.39  | Compute node                                   |
 
 **Why pi-node0 also computes:** The RPi5 is powerful enough to run `slurmctld` without significantly impacting job performance. Reserving it exclusively as a controller wastes 4 cores and 16 GB of RAM. SLURM handles job scheduling gracefully even when the controller is under compute load.
 
@@ -110,10 +118,10 @@ Internet / Home Network
 
 ### 2.3 Network Design
 
-- **Subnet:** `192.168.1.0/24`
+- **Subnet:** `192.168.129.0/24`
 - **Static IPs:** Configured via NetworkManager (`nmcli`) — the default network manager in Raspberry Pi OS Trixie
-- **Gateway:** Your home router (e.g., `192.168.1.1`) — only pi-node0 needs internet access for package installation; compute nodes reach the internet through the switch
-- **DNS:** Cluster nodes resolve each other via `/etc/hosts` (no DNS server needed at this scale)
+- **Gateway:** Your LAN router (e.g., `192.168.128.1`) — only pi-node0 needs internet access for package installation; compute nodes reach the internet through the switch
+- **DNS:** Cluster nodes resolve each other via `/etc/hosts` (no DNS server needed at this scale). **Disable cloud-init** after writing hosts so Raspberry Pi OS cannot rewrite `/etc/hosts` on reboot.
 - **Why static IPs:** SLURM `slurm.conf` references hostnames; MUNGE requires consistent identity; NFS mounts must be stable across reboots
 
 ### 2.4 Storage Design
@@ -167,7 +175,9 @@ pi-node1/2/3 (NFS Clients)
 **Node hardware parameters:**
 - CPUs: 4 (ARM Cortex-A76, 1 socket, 4 cores, 1 thread per core)
 - RealMemory: 15000 MB (leaving ~1 GB for OS and system processes)
-- Feature flags: `rpi5,arm64`
+- Process tracking: `proctrack/linuxproc` (cgroups disabled in live config)
+- Partition: single `compute` partition covering all four nodes
+- `slurmctld` runs as **root** via systemd override; `MailProg` points at a no-op stub
 
 ---
 
@@ -251,25 +261,11 @@ dtoverlay=disable-bt
 dtoverlay=disable-wifi
 ```
 
-#### 1.5 Enable Memory cgroup
+#### 1.5 Memory cgroup (optional — not used by live config)
 
-This is required for SLURM to enforce memory limits on jobs.
+The live cluster uses `CgroupPlugin=disabled` and `proctrack/linuxproc`. **Do not** add `cgroup_enable=memory` to `cmdline.txt` for the default path.
 
-```bash
-sudo nano /boot/firmware/cmdline.txt
-```
-
-**Append** (do not create a new line) to the existing single line:
-
-```
-cgroup_enable=memory
-```
-
-The complete line should look similar to:
-
-```
-console=serial0,115200 console=tty1 root=PARTUUID=xxxxxxxx-02 rootfstype=ext4 fsck.repair=yes rootwait quiet cgroup_enable=memory
-```
+If you later enable cgroup job isolation (Future Improvements), append `cgroup_enable=memory` to `/boot/firmware/cmdline.txt` (single line) and reboot.
 
 #### 1.6 Verify NVMe is Detected
 
@@ -320,8 +316,7 @@ sudo mount /dev/nvme0n1p1 /mnt/nvme-boot
 sudo nano /mnt/nvme-boot/config.txt
 # (Add dtparam=pciex1, dtparam=pciex1_gen=3, dtoverlay=disable-bt, dtoverlay=disable-wifi)
 
-sudo nano /mnt/nvme-boot/cmdline.txt
-# (Append cgroup_enable=memory)
+# Do NOT append cgroup_enable=memory for the live (cgroups-disabled) path
 
 # Enable SSH on first boot
 sudo touch /mnt/nvme-boot/ssh
@@ -362,8 +357,8 @@ nmcli connection show
 # On pi-node0:
 sudo nmcli connection modify "Wired connection 1" \
   ipv4.method manual \
-  ipv4.addresses "192.168.1.101/24" \
-  ipv4.gateway "192.168.1.1" \
+  ipv4.addresses "192.168.129.36/24" \
+  ipv4.gateway "192.168.128.1" \
   ipv4.dns "8.8.8.8,8.8.4.4" \
   connection.autoconnect yes
 
@@ -394,20 +389,29 @@ sudo tee /etc/hosts > /dev/null << 'EOF'
 127.0.1.1       pi-node0
 
 # Cluster nodes
-192.168.1.101   pi-node0
-192.168.1.102   pi-node1
-192.168.1.103   pi-node2
-192.168.1.104   pi-node3
+192.168.129.36   pi-node0
+192.168.129.37   pi-node1
+192.168.129.38   pi-node2
+192.168.129.39   pi-node3
 EOF
 ```
 
 > Replace `127.0.1.1   pi-node0` with the appropriate hostname on each node.
 
+#### 2.4 Disable cloud-init (All Nodes)
+
+Raspberry Pi OS may rewrite `/etc/hosts` on reboot via cloud-init. Disable it **after** hosts are correct:
+
+```bash
+sudo mkdir -p /etc/cloud
+sudo touch /etc/cloud/cloud-init.disabled
+```
+
 **Verify:**
 
 ```bash
 ping -c 2 pi-node1
-# PING pi-node1 (192.168.1.102): 56 data bytes
+# PING pi-node1 (192.168.129.37): 56 data bytes
 ```
 
 ---
@@ -569,7 +573,7 @@ pool 2.debian.pool.ntp.org iburst maxsources 4
 pool time.cloudflare.com iburst maxsources 2
 
 # Allow cluster nodes to sync from this node
-allow 192.168.1.0/24
+allow 192.168.129.0/24
 
 # Local clock as fallback (stratum 10 indicates low quality)
 local stratum 10
@@ -646,11 +650,12 @@ sudo mkdir -p /mnt/storage
 
 ```bash
 USB_UUID=$(sudo blkid -s UUID -o value /dev/sda1)
-echo "UUID=${USB_UUID}  /mnt/storage  ext4  defaults,noatime  0  2" | sudo tee -a /etc/fstab
+echo "UUID=${USB_UUID}  /mnt/storage  ext4  defaults,noatime,nofail  0  2" | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload
 sudo mount /mnt/storage
 ```
 
+Use `nofail` so a missing USB disk does not block boot.
 **Create shared directory structure:**
 
 ```bash
@@ -673,10 +678,10 @@ sudo tee /etc/exports > /dev/null << 'EOF'
 # Format: directory  client(options)
 
 # Shared scratch/data space for all cluster nodes
-/mnt/storage/shared  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
+/mnt/storage/shared  192.168.129.0/24(rw,sync,no_subtree_check,no_root_squash)
 
 # Shared home directory for user account
-/mnt/storage/home/user  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
+/mnt/storage/home/user  192.168.129.0/24(rw,sync,no_subtree_check,no_root_squash)
 EOF
 
 sudo systemctl enable --now nfs-kernel-server
@@ -687,13 +692,13 @@ sudo exportfs -ra
 
 ```bash
 sudo exportfs -v
-# /mnt/storage/shared  192.168.1.0/24(sync,wdelay,hide,no_subtree_check,...)
-# /mnt/storage/home/user  192.168.1.0/24(...)
+# /mnt/storage/shared  192.168.129.0/24(sync,wdelay,hide,no_subtree_check,...)
+# /mnt/storage/home/user  192.168.129.0/24(...)
 
 showmount -e pi-node0
 # Export list for pi-node0:
-# /mnt/storage/shared     192.168.1.0/24
-# /mnt/storage/home/user  192.168.1.0/24
+# /mnt/storage/shared     192.168.129.0/24
+# /mnt/storage/home/user  192.168.129.0/24
 ```
 
 #### 7.3 Mount NFS on Compute Nodes (pi-node1, 2, 3)
@@ -803,140 +808,101 @@ done
 #### 9.1 SLURM Directory Setup (All Nodes)
 
 ```bash
-# Create SLURM state and log directories
-sudo mkdir -p /var/spool/slurmctld   # Controller state (pi-node0 only, but harmless on all)
-sudo mkdir -p /var/spool/slurmd      # Compute node state
+# Create SLURM state and log directories (paths match live picluster)
+sudo mkdir -p /var/spool/slurm/ctld   # Controller state (pi-node0)
+sudo mkdir -p /var/spool/slurm/d      # Compute node state
 sudo mkdir -p /var/log/slurm
 
-sudo chown slurm:slurm /var/spool/slurmctld /var/spool/slurmd /var/log/slurm
-sudo chmod 0755 /var/spool/slurmctld /var/spool/slurmd /var/log/slurm
+sudo chown slurm:slurm /var/spool/slurm/ctld /var/spool/slurm/d /var/log/slurm
+sudo chmod 0755 /var/spool/slurm/ctld /var/spool/slurm/d /var/log/slurm
 ```
 
-#### 9.2 Create slurm.conf
+#### 9.2 Create the no-op mail stub (pi-node0)
 
-Create this file on **pi-node0** first, then distribute to all nodes.
+Pi OS Lite has no MTA. Without this, `slurmctld` fatals with `Configured MailProg is invalid`:
+
+```bash
+sudo tee /usr/local/bin/slurm-no-mail > /dev/null << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+sudo chmod +x /usr/local/bin/slurm-no-mail
+```
+
+#### 9.3 Create slurm.conf
+
+Create this file on **pi-node0** first, then distribute to all nodes. Matches the live working cluster (`picluster`): cgroups disabled, PMIx, CryptoType=crypto/munge.
 
 ```bash
 sudo tee /etc/slurm/slurm.conf > /dev/null << 'EOF'
-# =========================================================
-# SLURM Configuration for pi-cluster
-# Generated for Raspberry Pi 5 cluster (4 nodes x 4 cores x 16 GB)
-# SLURM 24.11.5 on Debian Trixie
-# =========================================================
+# =============================================================================
+# slurm.conf — picluster (Raspberry Pi 5 x4, Debian Trixie, SLURM 24.11.5)
+# Must be IDENTICAL on all nodes.
+# =============================================================================
 
-# Cluster identity
-ClusterName=pi-cluster
+ClusterName=picluster
 SlurmctldHost=pi-node0
 
-# Authentication
 AuthType=auth/munge
-CredType=cred/munge
+CryptoType=crypto/munge
 
-# Communication
-SlurmctldPort=6817
-SlurmdPort=6818
-ReturnAddrBindAddr=no
-
-# Users and paths
-SlurmUser=slurm
-SlurmdUser=root
-SlurmctldPidFile=/run/slurmctld.pid
-SlurmdPidFile=/run/slurmd.pid
-SlurmctldLogFile=/var/log/slurm/slurmctld.log
-SlurmdLogFile=/var/log/slurm/slurmd.log
-SlurmdSpoolDir=/var/spool/slurmd
-StateSaveLocation=/var/spool/slurmctld
-
-# Logging levels (set to 3 for production, increase for debugging)
-SlurmctldDebug=info
-SlurmdDebug=info
-
-# Process tracking — required for cgroup enforcement
-ProctrackType=proctrack/cgroup
-TaskPlugin=task/affinity,task/cgroup
-
-# Scheduling
 SchedulerType=sched/backfill
 SelectType=select/cons_tres
 SelectTypeParameters=CR_Core_Memory
 
-# Job accounting (flat file, no database needed)
-JobAcctGatherType=jobacct_gather/cgroup
-AccountingStorageType=accounting_storage/none
+# Live path: no cgroup job isolation
+ProctrackType=proctrack/linuxproc
+TaskPlugin=task/affinity
 
-# Timers
-InactiveLimit=0
-KillWait=30
-MinJobAge=300
-SlurmctldTimeout=120
+MpiDefault=pmix
+MailProg=/usr/local/bin/slurm-no-mail
+
+SlurmctldDebug=info
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdDebug=info
+SlurmdLogFile=/var/log/slurm/slurmd.log
+
+SlurmctldTimeout=300
 SlurmdTimeout=300
+InactiveLimit=0
+MinJobAge=300
+KillWait=30
 Waittime=0
 
-# Priority (simple for small cluster)
-PriorityType=priority/basic
+StateSaveLocation=/var/spool/slurm/ctld
+SlurmdSpoolDir=/var/spool/slurm/d
 
-# Topology
-TopologyPlugin=topology/none
+SlurmctldPidFile=/var/run/slurmctld.pid
+SlurmdPidFile=/var/run/slurmd.pid
 
-# Prolog/Epilog (none for basic setup)
-# Prolog=/etc/slurm/prolog.sh
-# Epilog=/etc/slurm/epilog.sh
+SlurmctldPort=6817
+SlurmdPort=6818
 
-# =========================================================
-# NODE DEFINITIONS
-# Raspberry Pi 5: 4x ARM Cortex-A76, 16 GB RAM
-# RealMemory=15000 reserves 1 GB for OS
-# =========================================================
-NodeName=pi-node0 NodeAddr=192.168.1.101 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5,headnode
-NodeName=pi-node1 NodeAddr=192.168.1.102 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5
-NodeName=pi-node2 NodeAddr=192.168.1.103 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5
-NodeName=pi-node3 NodeAddr=192.168.1.104 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5
+ReturnToService=2
 
-# =========================================================
-# PARTITIONS
-# =========================================================
+NodeName=pi-node0 NodeAddr=192.168.129.36 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+NodeName=pi-node1 NodeAddr=192.168.129.37 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+NodeName=pi-node2 NodeAddr=192.168.129.38 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+NodeName=pi-node3 NodeAddr=192.168.129.39 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
 
-# All partition: submits to all 4 nodes including head node
-PartitionName=all Nodes=pi-node[0-3] Default=YES MaxTime=INFINITE State=UP
-
-# Compute partition: submits only to dedicated compute nodes
-PartitionName=compute Nodes=pi-node[1-3] Default=NO MaxTime=INFINITE State=UP
-
-# Debug partition: one node, short jobs, useful for testing
-PartitionName=debug Nodes=pi-node1 Default=NO MaxTime=00:30:00 State=UP
+PartitionName=compute Nodes=pi-node[0-3] Default=YES MaxTime=INFINITE State=UP
 EOF
 ```
 
-#### 9.3 Create cgroup.conf
+#### 9.4 Create cgroup.conf
 
 ```bash
 sudo tee /etc/slurm/cgroup.conf > /dev/null << 'EOF'
-# SLURM cgroup configuration for Raspberry Pi 5 / Debian Trixie
-# Debian Trixie uses cgroup v2 (unified hierarchy)
-
-# Let SLURM detect the cgroup version automatically
-CgroupPlugin=autodetect
-
-# Enable all available controllers in the cgroup tree
-# Required on systemd-managed systems for proper delegation
-EnableControllers=yes
-
-# Resource enforcement
-ConstrainCores=yes
-ConstrainRAMSpace=yes
-ConstrainSwapSpace=yes
+# Live cluster: cgroup enforcement disabled (proctrack/linuxproc)
+CgroupPlugin=disabled
+CgroupAutomount=yes
+ConstrainCores=no
+ConstrainRAMSpace=no
 ConstrainDevices=no
-
-# Allow 0% swap (set to 0 to disable swap entirely for jobs)
-AllowedSwapSpace=0
-
-# MemSpecLimit reserves memory for system processes (MB)
-# Jobs cannot use this memory
-MemSpecLimit=512
 EOF
 ```
 
-#### 9.4 Distribute Configuration to All Nodes
+#### 9.5 Distribute Configuration to All Nodes
 
 ```bash
 for node in pi-node1 pi-node2 pi-node3; do
@@ -950,7 +916,29 @@ for node in pi-node1 pi-node2 pi-node3; do
 done
 ```
 
-#### 9.5 Start SLURM Services
+#### 9.6 Run slurmctld as root (pi-node0)
+
+Privilege mixing can prevent `slurmctld` from starting cleanly. Override the unit:
+
+```bash
+sudo systemctl edit slurmctld.service
+```
+
+Add:
+
+```ini
+[Service]
+User=root
+Group=root
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+```
+
+#### 9.7 Start SLURM Services
 
 On **pi-node0** (controller + compute):
 
@@ -971,9 +959,7 @@ sudo systemctl enable --now slurmd
 # On pi-node0:
 sinfo
 # PARTITION  AVAIL  TIMELIMIT  NODES  STATE  NODELIST
-# all*          up   infinite      4   idle  pi-node[0-3]
-# compute       up   infinite      3   idle  pi-node[1-3]
-# debug         up    0:30:00      1   idle  pi-node1
+# compute*      up   infinite      4   idle  pi-node[0-3]
 
 scontrol show nodes
 # NodeName=pi-node0 ... State=IDLE ...
@@ -989,15 +975,10 @@ sinfo -N -l
 # All nodes should show IDLE state
 
 # Submit a test job
-srun --nodes=1 hostname
-# pi-node1  (or any available node)
+srun --nodes=1 --partition=compute hostname
 
 # Submit a job spanning all nodes
-srun --nodes=4 hostname
-# pi-node0
-# pi-node1
-# pi-node2
-# pi-node3
+srun --nodes=4 --partition=compute hostname
 
 # Submit a batch job
 cat > /tmp/test.sh << 'SCRIPT'
@@ -1005,6 +986,7 @@ cat > /tmp/test.sh << 'SCRIPT'
 #SBATCH --job-name=hello-cluster
 #SBATCH --nodes=4
 #SBATCH --ntasks=4
+#SBATCH --partition=compute
 #SBATCH --output=/shared/hello-%j.out
 
 srun hostname
@@ -1033,10 +1015,10 @@ cat /shared/hello-1.out
 127.0.1.1       HOSTNAME_OF_THIS_NODE
 
 # Cluster nodes
-192.168.1.101   pi-node0
-192.168.1.102   pi-node1
-192.168.1.103   pi-node2
-192.168.1.104   pi-node3
+192.168.129.36   pi-node0
+192.168.129.37   pi-node1
+192.168.129.38   pi-node2
+192.168.129.39   pi-node3
 ```
 
 Replace `HOSTNAME_OF_THIS_NODE` with `pi-node0`, `pi-node1`, etc.
@@ -1045,8 +1027,8 @@ Replace `HOSTNAME_OF_THIS_NODE` with `pi-node0`, `pi-node1`, etc.
 
 ```
 # NFS exports for pi-cluster
-/mnt/storage/shared      192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
-/mnt/storage/home/user   192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
+/mnt/storage/shared      192.168.129.0/24(rw,sync,no_subtree_check,no_root_squash)
+/mnt/storage/home/user   192.168.129.0/24(rw,sync,no_subtree_check,no_root_squash)
 ```
 
 **Option explanations:**
@@ -1060,7 +1042,7 @@ Replace `HOSTNAME_OF_THIS_NODE` with `pi-node0`, `pi-node1`, etc.
 ```
 pool 2.debian.pool.ntp.org iburst maxsources 4
 pool time.cloudflare.com iburst maxsources 2
-allow 192.168.1.0/24
+allow 192.168.129.0/24
 local stratum 10
 makestep 1.0 3
 rtcsync
@@ -1095,59 +1077,55 @@ The same file is copied byte-for-byte to all other nodes. It must never be commi
 ### 4.6 /etc/slurm/slurm.conf (All Nodes — Identical)
 
 ```
-ClusterName=pi-cluster
+ClusterName=picluster
 SlurmctldHost=pi-node0
 AuthType=auth/munge
-CredType=cred/munge
-SlurmctldPort=6817
-SlurmdPort=6818
-SlurmUser=slurm
-SlurmdUser=root
-SlurmctldPidFile=/run/slurmctld.pid
-SlurmdPidFile=/run/slurmd.pid
-SlurmctldLogFile=/var/log/slurm/slurmctld.log
-SlurmdLogFile=/var/log/slurm/slurmd.log
-SlurmdSpoolDir=/var/spool/slurmd
-StateSaveLocation=/var/spool/slurmctld
-SlurmctldDebug=info
-SlurmdDebug=info
-ProctrackType=proctrack/cgroup
-TaskPlugin=task/affinity,task/cgroup
+CryptoType=crypto/munge
 SchedulerType=sched/backfill
 SelectType=select/cons_tres
 SelectTypeParameters=CR_Core_Memory
-JobAcctGatherType=jobacct_gather/cgroup
-AccountingStorageType=accounting_storage/none
-InactiveLimit=0
-KillWait=30
-MinJobAge=300
-SlurmctldTimeout=120
+ProctrackType=proctrack/linuxproc
+TaskPlugin=task/affinity
+MpiDefault=pmix
+MailProg=/usr/local/bin/slurm-no-mail
+SlurmctldDebug=info
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdDebug=info
+SlurmdLogFile=/var/log/slurm/slurmd.log
+SlurmctldTimeout=300
 SlurmdTimeout=300
+InactiveLimit=0
+MinJobAge=300
+KillWait=30
 Waittime=0
-PriorityType=priority/basic
-TopologyPlugin=topology/none
-NodeName=pi-node0 NodeAddr=192.168.1.101 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5,headnode
-NodeName=pi-node1 NodeAddr=192.168.1.102 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5
-NodeName=pi-node2 NodeAddr=192.168.1.103 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5
-NodeName=pi-node3 NodeAddr=192.168.1.104 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN Features=rpi5
-PartitionName=all Nodes=pi-node[0-3] Default=YES MaxTime=INFINITE State=UP
-PartitionName=compute Nodes=pi-node[1-3] Default=NO MaxTime=INFINITE State=UP
-PartitionName=debug Nodes=pi-node1 Default=NO MaxTime=00:30:00 State=UP
+StateSaveLocation=/var/spool/slurm/ctld
+SlurmdSpoolDir=/var/spool/slurm/d
+SlurmctldPidFile=/var/run/slurmctld.pid
+SlurmdPidFile=/var/run/slurmd.pid
+SlurmctldPort=6817
+SlurmdPort=6818
+ReturnToService=2
+NodeName=pi-node0 NodeAddr=192.168.129.36 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+NodeName=pi-node1 NodeAddr=192.168.129.37 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+NodeName=pi-node2 NodeAddr=192.168.129.38 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+NodeName=pi-node3 NodeAddr=192.168.129.39 CPUs=4 Sockets=1 CoresPerSocket=4 ThreadsPerCore=1 RealMemory=15000 State=UNKNOWN
+PartitionName=compute Nodes=pi-node[0-3] Default=YES MaxTime=INFINITE State=UP
 ```
 
 ### 4.7 /etc/slurm/cgroup.conf (All Nodes — Identical)
 
 ```
-CgroupPlugin=autodetect
-EnableControllers=yes
-ConstrainCores=yes
-ConstrainRAMSpace=yes
-ConstrainSwapSpace=yes
+CgroupPlugin=disabled
+CgroupAutomount=yes
+ConstrainCores=no
+ConstrainRAMSpace=no
 ConstrainDevices=no
-AllowedSwapSpace=0
-MemSpecLimit=512
 ```
 
+Also required on pi-node0:
+
+- `/usr/local/bin/slurm-no-mail` — stub script (`exit 0`)
+- `/etc/systemd/system/slurmctld.service.d/override.conf` — `User=root` / `Group=root`
 ---
 
 ## 5. Automation Scripts
@@ -1237,6 +1215,8 @@ sinfo
 
 ### 6.2 Cluster Shutdown
 
+> **Never power off pi-node0 while worker nodes still have NFS mounts.** Clients will hang on file I/O and may need a hard reboot. If a worker is stuck with a stale mount, run `sudo umount -l /shared` (and `/home/user` if applicable) for a lazy unmount.
+
 ```bash
 # Drain all jobs before shutdown
 sudo scontrol update NodeName=pi-node[0-3] State=DRAIN Reason="Scheduled shutdown"
@@ -1252,9 +1232,9 @@ done
 # Stop SLURM controller
 sudo systemctl stop slurmctld
 
-# Unmount NFS on compute nodes
+# Unmount NFS on compute nodes FIRST
 for node in pi-node1 pi-node2 pi-node3; do
-  ssh admin@${node} "sudo umount /shared /home/user"
+  ssh admin@${node} "sudo umount /shared /home/user || sudo umount -l /shared /home/user"
 done
 
 # Stop NFS server
@@ -1263,13 +1243,12 @@ sudo systemctl stop nfs-kernel-server
 # Sync all data
 sync
 
-# Shutdown all nodes
+# Shutdown compute nodes, then the head node last
 for node in pi-node1 pi-node2 pi-node3; do
   ssh admin@${node} "sudo shutdown -h now"
 done
 sudo shutdown -h now
 ```
-
 ### 6.3 Rolling Reboot
 
 ```bash
@@ -1363,7 +1342,7 @@ scontrol show partition
 scontrol show nodes
 
 # Test 1: Single-task job
-srun --ntasks=1 --partition=debug echo "Hello from $(hostname)"
+srun --ntasks=1 --partition=compute echo "Hello from $(hostname)"
 
 # Test 2: Multi-node parallel job
 srun --nodes=4 --ntasks-per-node=1 hostname
@@ -1424,28 +1403,21 @@ watch -n 1 'vcgencmd measure_temp && cat /sys/class/thermal/thermal_zone0/temp'
 
 ### 7.5 MPI Test (OpenMPI)
 
-Install OpenMPI first:
+Install OpenMPI and PMIx on **all nodes** (`MpiDefault=pmix` in `slurm.conf`):
 
 ```bash
-# On all nodes
-sudo apt install -y openmpi-bin openmpi-common libopenmpi-dev
+sudo apt install -y openmpi-bin openmpi-common libopenmpi-dev libpmix-dev
 ```
 
+**Required:** Dual-stack TCP caused OpenMPI hangs on this cluster. Prefer IPv4 only:
+
+- For `srun` / batch scripts: `export OMPI_MCA_btl_tcp_disable_family=6`
+- For direct `mpirun`: add `-mca btl_tcp_disable_family 6`
+
+Prefer **`srun`** over bare `mpirun` under SLURM (it reads `SLURM_*` environment variables automatically).
+
 ```bash
-cat > /tmp/mpi-test.sh << 'EOF'
-#!/bin/bash
-#SBATCH --job-name=mpi-test
-#SBATCH --nodes=4
-#SBATCH --ntasks=16
-#SBATCH --ntasks-per-node=4
-#SBATCH --time=00:05:00
-#SBATCH --output=/shared/mpi-%j.out
-
-module list 2>/dev/null || true
-mpirun hostname
-EOF
-
-# Create a simple MPI hello world
+# Create a simple MPI hello world on shared storage
 cat > /shared/hello_mpi.c << 'CEOF'
 #include <mpi.h>
 #include <stdio.h>
@@ -1472,9 +1444,11 @@ cat > /tmp/mpi-hello.sh << 'EOF'
 #SBATCH --nodes=4
 #SBATCH --ntasks=16
 #SBATCH --ntasks-per-node=4
+#SBATCH --partition=compute
 #SBATCH --time=00:02:00
 #SBATCH --output=/shared/mpi-hello-%j.out
 
+export OMPI_MCA_btl_tcp_disable_family=6
 srun /shared/hello_mpi
 EOF
 
@@ -1484,6 +1458,20 @@ sbatch /tmp/mpi-hello.sh
 ---
 
 ## 8. Troubleshooting Guide
+
+### 8.0 Operational Caveats (bring-up)
+
+| Issue | Cause / Fix |
+|-------|-------------|
+| `/etc/hosts` resets after reboot | Disable cloud-init: `sudo touch /etc/cloud/cloud-init.disabled` |
+| `MailProg is invalid` / `slurmctld` crash | Create `/usr/local/bin/slurm-no-mail` stub (`exit 0`) |
+| `slurmctld` privilege errors | systemd override: `User=root` / `Group=root` |
+| OpenMPI hang / dual-stack | `export OMPI_MCA_btl_tcp_disable_family=6` (or `-mca btl_tcp_disable_family 6`) |
+| PMIx errors with `srun` | `MpiDefault=pmix` in `slurm.conf` + `apt install libpmix-dev` |
+| Cgroup / `ConstrainRAMSpace` errors | Live config has **cgroups disabled**; do not enable unless intentionally reworking (Future Improvements) |
+| USB-C connected while PoE active | Hardware damage risk — use PoE as the sole power source |
+| NFS stale / hang when head powered off | Unmount clients first; `sudo umount -l /shared` if needed |
+| GS305EPP port has no PoE | Prefer lower-numbered ports (PoE priority); confirm 802.3at |
 
 ### 8.1 Raspberry Pi 5 Hardware Issues
 
@@ -1522,10 +1510,13 @@ sudo nano /boot/firmware/config.txt
 
 **Symptoms:** Pi powers on from SD card but not from PoE switch.
 
-**Diagnosis:** Check GS305EPP port LEDs. Each port supports max 30W. PoE class must match.
+**Diagnosis:** Check GS305EPP port LEDs. Each port supports max 30W. PoE class must match. Lower-numbered ports have PoE priority.
 
 **Fix:** Ensure GS305EPP has IEEE 802.3af/at PoE enabled (check web interface at switch IP). Most RPi5 PoE HATs require 802.3at (PoE+) for full power.
 
+#### Dual Power (USB-C + PoE)
+
+**Never** connect the Pi 5 USB-C power port while the PoE HAT is supplying power. Dual power can damage the board or HAT. Use PoE as the sole power source with these HATs.
 ### 8.2 NVMe Boot Caveats
 
 #### PARTUUID Mismatch After Cloning
@@ -1701,21 +1692,13 @@ Common reasons:
 - `PartitionNodeLimit` — requested more nodes than partition allows
 - `BadConstraints` — requested feature (`--constraint=...`) not available on any node
 
-#### SLURM Cannot Enforce Memory Limits
+#### SLURM cgroup / memory limit errors
 
-**Symptoms:** Jobs use more RAM than requested; `ConstrainRAMSpace` has no effect.
+**Symptoms:** Jobs fail with cgroup errors, or `ConstrainRAMSpace` has no effect.
 
-**Fix:** Memory cgroup is not enabled.
-```bash
-# Check on the affected node:
-cat /proc/cmdline | grep cgroup_enable
-# Should contain: cgroup_enable=memory
+**Live path:** This cluster uses `CgroupPlugin=disabled` and `proctrack/linuxproc`. Cgroup errors usually mean a node still has an old `slurm.conf` / `cgroup.conf` that enables cgroups. Re-copy the live configs and restart `slurmd`.
 
-# If not present, add to cmdline.txt:
-sudo nano /boot/firmware/cmdline.txt
-# Append: cgroup_enable=memory
-sudo reboot
-```
+**Optional future path:** To enable cgroup memory enforcement later, see Future Improvements (§9.1) — that recipe requires `cgroup_enable=memory` in `cmdline.txt` and a different `cgroup.conf`.
 
 #### slurmctld: "Communication error" from compute nodes
 
@@ -1731,11 +1714,35 @@ id munge   # Compare across all nodes - must be identical
 
 **Fix:** If munge UIDs differ, remove and recreate both `slurm` and `munge` users with explicit UIDs (requires reinstalling `munge` and `slurm-wlm` packages).
 
+#### MailProg is invalid
+
+**Symptoms:** `slurmctld` fails with `fatal: ... Configured MailProg is invalid`.
+
+**Fix:** Create the stub:
+
+```bash
+sudo tee /usr/local/bin/slurm-no-mail >/dev/null <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+sudo chmod +x /usr/local/bin/slurm-no-mail
+sudo systemctl restart slurmctld
+```
+
 ---
 
 ## 9. Future Improvements
 
-### 9.1 Performance Optimizations
+### 9.1 Optional: enable cgroup v2 job isolation
+
+The live cluster intentionally keeps cgroups disabled. To enforce memory/CPU limits later:
+
+1. Append `cgroup_enable=memory` to `/boot/firmware/cmdline.txt` on all nodes and reboot.
+2. Change `slurm.conf` to `ProctrackType=proctrack/cgroup` and `TaskPlugin=task/affinity,task/cgroup`.
+3. Set `cgroup.conf` to `CgroupPlugin=autodetect` with `ConstrainCores=yes` / `ConstrainRAMSpace=yes` (and related options).
+4. Distribute configs and restart `slurmctld` / `slurmd`.
+
+### 9.2 Performance Optimizations
 
 - **PCIe Gen 3:** Already enabled with `dtparam=pciex1_gen=3`. Benchmark with `fio` to verify actual throughput vs Gen 2 baseline.
 - **CPU governor:** Switch to `performance` governor for consistent latency:
@@ -1751,32 +1758,32 @@ id munge   # Compare across all nodes - must be identical
   TmpFS=/tmp
   ```
 
-### 9.2 Software Stack Additions
+### 9.3 Software Stack Additions
 
 - **Julia 1.11.1:** Install from the official Julia download page; not in Debian Trixie repos at this version.
 - **Python 3.14:** Available in Debian Trixie (`python3`); install with `apt install python3 python3-pip python3-venv`.
-- **OpenMPI 5.0.x:** Available via `apt install openmpi-bin libopenmpi-dev`.
+- **OpenMPI 5.0.x:** Available via `apt install openmpi-bin libopenmpi-dev` (plus `libpmix-dev` for PMIx).
 - **CMake 3.28+:** Available via `apt install cmake`.
 - **Lmod / Environment Modules:** For managing multiple software versions on shared storage.
 
-### 9.3 Monitoring
+### 9.4 Monitoring
 
 - **Prometheus + Node Exporter:** Deploy on each node for real-time metrics.
 - **Grafana:** Dashboard on pi-node0 for cluster health visualization.
 - **SLURM accounting:** Enable `JobAcctGatherType=jobacct_gather/linux` and a SQLite/MySQL database for job history.
 
-### 9.4 High Availability
+### 9.5 High Availability
 
 - For production use, consider SLURM's `BackupController` option pointing to pi-node1. This provides controller failover if pi-node0 crashes.
 - Use a DRBD-mirrored volume for `StateSaveLocation` between pi-node0 and pi-node1.
 
-### 9.5 Security Hardening
+### 9.6 Security Hardening
 
 - Enable `fail2ban` to block SSH brute-force attacks.
 - Configure `ufw` firewall to allow only required ports (22, 6817, 6818, 2049, 111, 123).
 - Rotate the MUNGE key periodically and use `scontrol reconfigure` after distributing the new key.
 - Consider replacing MUNGE with `auth/jwt` for external user access (SLURM 24.x+).
 
-### 9.6 Kubernetes Option
+### 9.7 Kubernetes Option
 
-The same hardware can run a lightweight Kubernetes cluster (K3s) alongside or instead of SLURM. K3s has native support for RPi5 and Debian Trixie, and the cgroup configuration required for SLURM (`cgroup_enable=memory`) is identical to what K3s needs. The two schedulers should not run simultaneously on the same cluster.
+The same hardware can run a lightweight Kubernetes cluster (K3s) alongside or instead of SLURM. K3s has native support for RPi5 and Debian Trixie; enabling memory cgroups (`cgroup_enable=memory`) is typically required for K3s, independent of this cluster’s SLURM cgroups-disabled path. The two schedulers should not run simultaneously on the same cluster.

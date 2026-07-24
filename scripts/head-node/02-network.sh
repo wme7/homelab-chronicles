@@ -106,6 +106,17 @@ done
 log "INFO" "/etc/hosts written with all cluster nodes"
 
 # =============================================================================
+# Disable cloud-init so it cannot rewrite /etc/hosts on reboot
+# =============================================================================
+if [[ -f /etc/cloud/cloud-init.disabled ]]; then
+    log "INFO" "cloud-init already disabled — skipping"
+else
+    mkdir -p /etc/cloud
+    touch /etc/cloud/cloud-init.disabled
+    log "INFO" "Created /etc/cloud/cloud-init.disabled"
+fi
+
+# =============================================================================
 # Verify connectivity
 # =============================================================================
 log "INFO" "Verifying network configuration..."

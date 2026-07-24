@@ -28,17 +28,20 @@ ARCH=$(uname -m)
 log "INFO" "=== Starting base system configuration for COMPUTE NODE $(hostname) ==="
 
 # =============================================================================
-# Enable memory cgroup (required for SLURM resource enforcement)
+# Memory cgroup (NOT required for current live config)
+# Live cluster uses CgroupPlugin=disabled / proctrack/linuxproc.
+# Leave cgroup_enable=memory out of cmdline.txt unless you later enable
+# cgroup job isolation (see documents/guide.md Future Improvements).
 # =============================================================================
-CMDLINE_FILE="/boot/firmware/cmdline.txt"
-[[ -f "${CMDLINE_FILE}" ]] || die "Cannot find ${CMDLINE_FILE}"
+# CMDLINE_FILE="/boot/firmware/cmdline.txt"
+# [[ -f "${CMDLINE_FILE}" ]] || die "Cannot find ${CMDLINE_FILE}"
 
-if grep -q "cgroup_enable=memory" "${CMDLINE_FILE}"; then
-    log "INFO" "cgroup_enable=memory already set — skipping"
-else
-    log "INFO" "Adding cgroup_enable=memory to ${CMDLINE_FILE}"
-    sed -i 's/$/ cgroup_enable=memory/' "${CMDLINE_FILE}"
-fi
+# if grep -q "cgroup_enable=memory" "${CMDLINE_FILE}"; then
+#     log "INFO" "cgroup_enable=memory already set — skipping"
+# else
+#     log "INFO" "Adding cgroup_enable=memory to ${CMDLINE_FILE}"
+#     sed -i 's/$/ cgroup_enable=memory/' "${CMDLINE_FILE}"
+# fi
 
 # =============================================================================
 # PCIe and NVMe configuration
@@ -93,10 +96,11 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     openssh-server \
     rsync
 
-log "INFO" "Installing SLURM compute node packages..."
+log "INFO" "Installing SLURM compute node packages and PMIx (MpiDefault=pmix)..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
     slurmd \
-    slurm-client
+    slurm-client \
+    libpmix-dev
 
 # =============================================================================
 # Update EEPROM
@@ -136,4 +140,3 @@ fi
 
 log "INFO" "=== Base system configuration complete for $(hostname) ==="
 log "INFO" "Next step: sudo bash 02-network.sh"
-log "WARN" "A reboot is recommended to apply cmdline.txt changes"

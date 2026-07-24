@@ -160,6 +160,30 @@ chmod 0644 "${SLURM_CONF_DIR}/cgroup.conf"
 log "INFO" "cgroup.conf written"
 
 # =============================================================================
+# Mail stub (Pi OS Lite has no MTA — MailProg must exist or slurmctld fatals)
+# =============================================================================
+log "INFO" "Creating /usr/local/bin/slurm-no-mail stub..."
+tee /usr/local/bin/slurm-no-mail >/dev/null << 'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod +x /usr/local/bin/slurm-no-mail
+log "INFO" "slurm-no-mail stub installed"
+
+# =============================================================================
+# Run slurmctld as root (required — privilege errors with SlurmUser=slurm)
+# =============================================================================
+log "INFO" "Installing slurmctld systemd override (User=root)..."
+mkdir -p /etc/systemd/system/slurmctld.service.d
+cat >/etc/systemd/system/slurmctld.service.d/override.conf << 'EOF'
+[Service]
+User=root
+Group=root
+EOF
+systemctl daemon-reload
+log "INFO" "slurmctld override installed"
+
+# =============================================================================
 # Distribute configuration to compute nodes
 # =============================================================================
 log "INFO" "Distributing SLURM configuration to compute nodes..."

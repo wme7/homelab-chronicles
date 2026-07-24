@@ -121,7 +121,7 @@ else
         log "INFO" "fstab entry for UUID=${USB_UUID} already exists"
     else
         log "INFO" "Adding fstab entry for ${STORAGE_MOUNT} (UUID=${USB_UUID})"
-        echo "UUID=${USB_UUID}  ${STORAGE_MOUNT}  ext4  defaults,noatime  0  2" >> /etc/fstab
+        echo "UUID=${USB_UUID}  ${STORAGE_MOUNT}  ext4  defaults,noatime,nofail  0  2" >> /etc/fstab
     fi
 
     systemctl daemon-reload
