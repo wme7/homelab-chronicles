@@ -38,6 +38,8 @@ die() { log "ERROR" "$*"; exit 1; }
 MUNGE_KEY="/etc/munge/munge.key"
 COMPUTE_NODES=("pi-node1" "pi-node2" "pi-node3")
 ADMIN_USER="admin"
+ADMIN_KEY="/home/admin/.ssh/id_ed25519"
+GENERATED_NEW_KEY=false # if true, the key will be generated and distributed to the compute nodes
 
 log "INFO" "=== Configuring MUNGE authentication ==="
 
@@ -65,6 +67,7 @@ else
     log "INFO" "Generating new MUNGE key (1024 random bytes)..."
     dd if=/dev/urandom bs=1 count=1024 of="${MUNGE_KEY}" 2>/dev/null
     log "INFO" "Key generated"
+    GENERATED_NEW_KEY=true
 fi
 
 # Always set correct ownership and permissions
@@ -102,20 +105,21 @@ log "INFO" "Local MUNGE test: PASSED"
 KEY_MD5=$(md5sum "${MUNGE_KEY}" | awk '{print $1}')
 log "INFO" "Distributing MUNGE key (MD5: ${KEY_MD5}) to compute nodes..."
 
-for node in "${COMPUTE_NODES[@]}"; do
-    log "INFO" "Processing ${node}..."
+if [[ "${GENERATED_NEW_KEY}" == true ]]; then
+    for node in "${COMPUTE_NODES[@]}"; do
+        log "INFO" "Processing ${node}..."
 
-    # Test SSH connectivity
-    if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "${ADMIN_USER}@${node}" true 2>/dev/null; then
-        log "WARN" "Cannot SSH to ${node} — skipping. Configure SSH first, then re-run."
-        continue
-    fi
+        # Test SSH connectivity
+        if ! ssh -i "${ADMIN_KEY}" -o ConnectTimeout=5 -o BatchMode=yes "${ADMIN_USER}@${node}" true 2>/dev/null; then
+            log "WARN" "Cannot SSH to ${node} — skipping. Configure SSH first, then re-run."
+            continue
+        fi
 
-    # Copy key
-    scp -q "${MUNGE_KEY}" "${ADMIN_USER}@${node}:/tmp/munge.key.new"
+        # Copy key
+        scp -i "${ADMIN_KEY}" -q "${MUNGE_KEY}" "${ADMIN_USER}@${node}:/tmp/munge.key.new"
 
-    # Install key with correct permissions on remote node
-    ssh "${ADMIN_USER}@${node}" "sudo bash -s" << 'REMOTE_EOF'
+        # Install key with correct permissions on remote node
+        ssh -i "${ADMIN_KEY}" "${ADMIN_USER}@${node}" "sudo bash -s" << 'REMOTE_EOF'
 set -euo pipefail
 mkdir -p /etc/munge /var/lib/munge /var/log/munge /run/munge
 mv /tmp/munge.key.new /etc/munge/munge.key
@@ -129,19 +133,20 @@ systemctl enable munge
 systemctl restart munge
 REMOTE_EOF
 
-    log "INFO" "MUNGE key installed and daemon started on ${node}"
+        log "INFO" "MUNGE key installed and daemon started on ${node}"
 
-    # Verify remote MUNGE
-    sleep 2
-    log "INFO" "Testing MUNGE from pi-node0 -> ${node}..."
-    REMOTE_TEST=$(munge -n | ssh "${ADMIN_USER}@${node}" "sudo unmunge" 2>&1 || true)
-    log "INFO" "  ${node}: ${REMOTE_TEST}"
-    if echo "${REMOTE_TEST}" | grep -q "STATUS:.*Success"; then
-        log "INFO" "  Cross-node MUNGE test to ${node}: PASSED"
-    else
-        log "WARN" "  Cross-node MUNGE test to ${node}: FAILED — check munge UID and key"
-    fi
-done
+        # Verify remote MUNGE
+        sleep 2
+        log "INFO" "Testing MUNGE from pi-node0 -> ${node}..."
+        REMOTE_TEST=$(munge -n | ssh -i "${ADMIN_KEY}" "${ADMIN_USER}@${node}" "sudo unmunge" 2>&1 || true)
+        log "INFO" "  ${node}: ${REMOTE_TEST}"
+        if echo "${REMOTE_TEST}" | grep -q "STATUS:.*Success"; then
+            log "INFO" "  Cross-node MUNGE test to ${node}: PASSED"
+        else
+            log "WARN" "  Cross-node MUNGE test to ${node}: FAILED — check munge UID and key"
+        fi
+    done
+fi
 
 # =============================================================================
 # Final verification — compare key MD5 across all nodes
@@ -150,7 +155,7 @@ log "INFO" "=== MUNGE key consistency check ==="
 log "INFO" "pi-node0 key MD5: ${KEY_MD5}"
 
 for node in "${COMPUTE_NODES[@]}"; do
-    REMOTE_MD5=$(ssh -o BatchMode=yes "${ADMIN_USER}@${node}" "sudo md5sum /etc/munge/munge.key 2>/dev/null | awk '{print \$1}'" 2>/dev/null || echo "UNREACHABLE")
+    REMOTE_MD5=$(ssh -i "${ADMIN_KEY}" -o BatchMode=yes "${ADMIN_USER}@${node}" "sudo md5sum /etc/munge/munge.key 2>/dev/null | awk '{print \$1}'" 2>/dev/null || echo "UNREACHABLE")
     if [[ "${REMOTE_MD5}" == "${KEY_MD5}" ]]; then
         log "INFO" "${node} key MD5: ${REMOTE_MD5} ✓ MATCH"
     else
