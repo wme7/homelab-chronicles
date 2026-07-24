@@ -1,5 +1,7 @@
 # Cluster CLI
 
+![cluster_cli](./images/cluster_cli.png)
+
 Laptop-side tool to run commands, apt operations, git clones, and file transfers
 across the Raspberry Pi nodes in parallel (via [parallel-ssh](https://parallel-ssh.org/)).
 
