@@ -934,7 +934,7 @@ sbatch /shared/scratch/run_pi.sh
 
 ```bash
 sudo apt install python3-mpi4py python3-pip -y
-# Or via pip:
+# Or via pip (Avoid if possible!):
 pip3 install mpi4py --break-system-packages
 ```
 
@@ -972,7 +972,7 @@ export OMPI_MCA_btl_tcp_disable_family=6
 srun python3 /shared/scratch/hello_mpi.py
 EOF
 
-sbatch /shared/scratch/run_hello_mpi_py.sh
+sbatch /shared/scratch/hello_mpi_py.sh
 ```
 
 ### 14.4 Scatter / Gather example in Python
@@ -1001,6 +1001,46 @@ results = comm.gather(local_result, root=0)
 if rank == 0:
     all_results = np.concatenate(results)
     print("Squared array:", all_results)
+```
+
+> **REMARK: Avoid installing packages for dependencies on the system's python3 interpreter! It is not recommended.** 
+>  * Use a virtual environment instead!
+>  * The `user` does not need have root privileges to create the virtual environment.
+>  * The virtual environment is created in the shared storage and is available to all nodes.
+
+### 14.5 Create a virtual environment to install dependencies
+
+As `admin`, install virtualenv from debian package on head node:
+```bash
+sudo apt install virtualenv -y
+```
+
+Create a virtual environment that includes mpi4py and other dependencies:
+```bash
+virtualenv /shared/software/venv-mpi
+```
+
+Activate the virtual environment and install numpy:
+```bash
+source /shared/software/venv-mpi/bin/activate
+pip install -U pip
+pip install numpy mpi4py
+deactivate
+```
+
+### Use it in SLURM jobs
+```bash
+cat > /shared/scratch/run_scatter_gather.sh << 'EOF'
+#!/bin/bash
+#SBATCH --ntasks=4
+#SBATCH --output=/shared/scratch/job_%j.out
+
+source /shared/software/venv-mpi/bin/activate
+export OMPI_MCA_btl_tcp_disable_family=6
+srun python /shared/scratch/scatter_gather.py
+EOF
+
+sbatch /shared/scratch/run_scatter_gather.sh
 ```
 
 ---
