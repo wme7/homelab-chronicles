@@ -1,0 +1,27 @@
+# Example inventory for the cluster CLI.
+# Copy to ~/.config/cluster/config.yaml or pass with --config / CLUSTER_CONFIG.
+#
+# From a laptop, prefer IPs (or add pi-node* to /etc/hosts / SSH config).
+
+user: admin
+# key: ~/.ssh/id_ed25519
+# timeout: 30
+
+hosts:
+  - 192.168.129.36  # pi-node0 (head)
+  - 192.168.129.37  # pi-node1
+  - 192.168.129.38  # pi-node2
+  - 192.168.129.39  # pi-node3
+
+groups:
+  all:
+    - 192.168.129.36
+    - 192.168.129.37
+    - 192.168.129.38
+    - 192.168.129.39
+  compute:
+    - 192.168.129.37
+    - 192.168.129.38
+    - 192.168.129.39
+  head:
+    - 192.168.129.36

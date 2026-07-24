@@ -16,6 +16,8 @@ This repository serves as a record of documents and scripts (both written by me 
 
 [Raspberry Pi Cluster](./RASPBERRY_PI_CLUSTER.md)
 
+Cluster management CLI (parallel SSH from your laptop): [CLUSTER_CLI.md](./CLUSTER_CLI.md)
+
 ## Jetson Orin Nano
 
 [Jetson Orin Nano](./JETSON_ORIN_NANO.md)
