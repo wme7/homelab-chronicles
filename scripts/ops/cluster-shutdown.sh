@@ -9,7 +9,7 @@
 #   3. Stop slurmd on compute nodes
 #   4. Stop slurmctld on pi-node0
 #   5. Unmount NFS on compute nodes
-#   6. Stop NFS server on pi-node0
+#   6. Stop NFS server; unmount bind mounts on pi-node0
 #   7. Stop MUNGE on all nodes
 #   8. Shutdown compute nodes
 #   9. Shutdown pi-node0
@@ -145,6 +145,9 @@ done
 log "INFO" "Step 6/9: Stopping NFS server..."
 systemctl stop nfs-kernel-server 2>/dev/null && log "INFO" "  NFS server stopped" || true
 sync
+# Unmount head-node bind mounts before the underlying SSD
+umount /shared /home/user 2>/dev/null && log "INFO" "  /shared and /home/user unmounted" || \
+    warn "  Bind mounts already unmounted or busy"
 if mountpoint -q "${STORAGE_MOUNT}"; then
     umount "${STORAGE_MOUNT}" && log "INFO" "  ${STORAGE_MOUNT} unmounted" || \
         warn "  Could not unmount ${STORAGE_MOUNT} (lazy unmount)"

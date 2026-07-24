@@ -5,7 +5,7 @@
 #
 # Startup order:
 #   1. MUNGE on all nodes
-#   2. Mount USB SSD on pi-node0
+#   2. Mount USB SSD + bind mounts on pi-node0
 #   3. NFS server on pi-node0
 #   4. NFS mounts on compute nodes
 #   5. slurmctld on pi-node0
@@ -60,15 +60,24 @@ systemctl start munge
 systemctl is-active --quiet munge && log "INFO" "  MUNGE: OK" || die "  MUNGE failed to start on pi-node0"
 
 # =============================================================================
-# Step 2: Mount USB SSD
+# Step 2: Mount USB SSD and head-node bind mounts
 # =============================================================================
-log "INFO" "Step 2/8: Mounting USB SSD..."
+log "INFO" "Step 2/8: Mounting USB SSD and bind mounts..."
 if mountpoint -q "${STORAGE_MOUNT}"; then
     log "INFO" "  ${STORAGE_MOUNT}: already mounted"
 else
     mount "${STORAGE_MOUNT}" && log "INFO" "  ${STORAGE_MOUNT}: mounted" || \
         die "  Failed to mount ${STORAGE_MOUNT}"
 fi
+
+for mp in /shared /home/user; do
+    if mountpoint -q "${mp}"; then
+        log "INFO" "  ${mp}: already mounted"
+    else
+        mount "${mp}" && log "INFO" "  ${mp}: mounted" || \
+            warn "  Failed to mount ${mp}"
+    fi
+done
 
 # =============================================================================
 # Step 3: Start NFS server
