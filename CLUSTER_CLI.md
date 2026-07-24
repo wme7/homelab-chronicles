@@ -36,6 +36,7 @@ cluster run "df -h" --hosts pi-node1,pi-node2
 cluster apt update                 # prompts for sudo password
 cluster apt upgrade
 cluster apt install htop git
+cluster apt install python3-mpi4py
 cluster apt remove cowsay
 cluster apt autoremove             # unused deps; add --purge for configs
 cluster apt clean                  # clear /var/cache/apt/archives
@@ -44,6 +45,7 @@ cluster run --sudo "systemctl status slurmd"
 cluster clone https://github.com/org/repo.git /home/user/src/repo --user user
 cluster pull /var/log/syslog ./logs/
 cluster push ./script.sh /tmp/script.sh
+cluster run "cd homelab-chronicles && git pull"
 ```
 
 Global options (before the subcommand):
