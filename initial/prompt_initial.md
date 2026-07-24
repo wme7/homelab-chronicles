@@ -35,10 +35,10 @@ The following hardware has been acquired to build the cluster:
 - Use all 4-nodes for doing computation.
 - For simplicity, I wish to create an `admin` (root) user a `user` (a non-root) user.
 - The hostnames are will be set as:
-  - `192.168.1.101` `pi-node0` (head node and controller)
-  - `192.168.1.102` `pi-node1` (compute node)
-  - `192.168.1.103` `pi-node2` (compute node)
-  - `192.168.1.104` `pi-node3` (compute node)
+  - `192.168.129.36` `pi-node0` (compute and controller node)
+  - `192.168.129.37` `pi-node1` (compute node)
+  - `192.168.129.38` `pi-node2` (compute node)
+  - `192.168.129.39` `pi-node3` (compute node)
 
 **Instructions:**
 - Install the OS on the NVME SSD of each node.
