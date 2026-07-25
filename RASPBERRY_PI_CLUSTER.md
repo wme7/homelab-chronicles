@@ -47,8 +47,8 @@ The objective here is not creating an updated guide to build a SLURM cluster usi
 In other words, we would develop an educated `prompt` that can be used by commercial AI (Claude's Sonnet 4.6) to assist on compiling a guide (or develop fully automated scripts) to build the mini-cluster I wish to have.
 
 Steps:
-- An initial prompt was manually written [here](./documents/prompt_initial.md). 
-- This prompt was used to generate an initial [guide](./documents/guide.md) (in markdown format) and a set of basic scripts to build the cluster.
+- An initial prompt was manually written [here](./initial/prompt_initial.md). 
+- This prompt was used to generate an initial [guide](./initial/guide_initial.md) (in markdown format) and a set of basic scripts to build the cluster.
 - The guide was reviewed and the scripts were tested manually. Several iterations/, fixes and changes were needed to get the cluster fully operational.
 - The initial prompt was updated with new assumptions and requirements [here](./documents/prompt_final.md).
 - The guide is now updated with the final version [here](./documents/guide.md) and its companion scripts [here](./scripts/scripts.md).
