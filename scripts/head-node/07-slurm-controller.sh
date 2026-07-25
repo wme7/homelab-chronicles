@@ -42,9 +42,12 @@ CLUSTER_NAME="picluster"
 CONTROLLER_HOST="pi-node0"
 COMPUTE_NODES=("pi-node1" "pi-node2" "pi-node3")
 ADMIN_USER="admin"
+ADMIN_KEY="/home/admin/.ssh/id_ed25519"
 SLURM_CONF_DIR="/etc/slurm"
-SLURM_SPOOL_CTLD="/var/spool/slurm/ctld"
+SLURM_SPOOL="/var/spool/slurm"
 SLURM_SPOOL_D="/var/spool/slurm/d"
+SLURM_SPOOL_CTLD="/var/spool/slurm/ctld"
+SLURM_VAR_LOG_DIR="/var/log/slurm"
 
 log "INFO" "=== Configuring SLURM controller on ${CONTROLLER_HOST} ==="
 
@@ -52,11 +55,13 @@ log "INFO" "=== Configuring SLURM controller on ${CONTROLLER_HOST} ==="
 # Create required directories
 # =============================================================================
 log "INFO" "Creating SLURM directories..."
-install -d -m 0755 -o slurm -g slurm \
-    "${SLURM_SPOOL_CTLD}" \
-    "${SLURM_SPOOL_D}" \
-    /var/log/slurm \
+install -d -m 0755 -o root -g root \
     "${SLURM_CONF_DIR}"
+install -d -m 0755 -o slurm -g slurm \
+    "${SLURM_SPOOL}" \
+    "${SLURM_SPOOL_D}" \
+    "${SLURM_SPOOL_CTLD}" \
+    "${SLURM_VAR_LOG_DIR}"
 
 # =============================================================================
 # Write slurm.conf (matches live working options)
@@ -135,7 +140,7 @@ NodeName=pi-node3 NodeAddr=192.168.129.39 CPUs=4 Sockets=1 CoresPerSocket=4 Thre
 PartitionName=compute Nodes=pi-node[0-3] Default=YES MaxTime=INFINITE State=UP
 SLURM_CONF_EOF
 
-chown slurm:slurm "${SLURM_CONF_DIR}/slurm.conf"
+chown root:root "${SLURM_CONF_DIR}/slurm.conf"
 chmod 0644 "${SLURM_CONF_DIR}/slurm.conf"
 log "INFO" "slurm.conf written"
 
@@ -155,113 +160,197 @@ ConstrainRAMSpace=no
 ConstrainDevices=no
 CGROUP_CONF_EOF
 
-chown slurm:slurm "${SLURM_CONF_DIR}/cgroup.conf"
+chown root:root "${SLURM_CONF_DIR}/cgroup.conf"
 chmod 0644 "${SLURM_CONF_DIR}/cgroup.conf"
 log "INFO" "cgroup.conf written"
 
 # =============================================================================
+# Verification 1: compare slurm.conf and cgroup.conf MD5 across all nodes
+# =============================================================================
+log "INFO" "Verifying slurm.conf and cgroup.conf across all nodes..."
+SLURM_CONF_MD5_CHANGED=false
+CGROUP_CONF_MD5_CHANGED=false
+
+SLURM_CONF_MD5=$(md5sum "${SLURM_CONF_DIR}/slurm.conf" | awk '{print $1}')
+CGROUP_CONF_MD5=$(md5sum "${SLURM_CONF_DIR}/cgroup.conf" | awk '{print $1}')
+
+for node in "${COMPUTE_NODES[@]}"; do
+    REMOTE_MD5=$(ssh -i "${ADMIN_KEY}" -o BatchMode=yes "${ADMIN_USER}@${node}" "sudo md5sum /etc/slurm/slurm.conf | awk '{print \$1}'" 2>/dev/null || echo "unknown")
+    if [[ "${REMOTE_MD5}" != "${SLURM_CONF_MD5}" ]]; then
+        log "ERROR" "slurm.conf on ${node} is different from the head node"
+        SLURM_CONF_MD5_CHANGED=true
+    fi
+    REMOTE_MD5=$(ssh -i "${ADMIN_KEY}" -o BatchMode=yes "${ADMIN_USER}@${node}" "sudo md5sum /etc/slurm/cgroup.conf | awk '{print \$1}'" 2>/dev/null || echo "unknown")
+    if [[ "${REMOTE_MD5}" != "${CGROUP_CONF_MD5}" ]]; then
+        log "ERROR" "cgroup.conf on ${node} is different from the head node"
+        CGROUP_CONF_MD5_CHANGED=true
+    fi
+done
+
+log "INFO" "SLURM_CONF_MD5_CHANGED: ${SLURM_CONF_MD5_CHANGED}"
+log "INFO" "CGROUP_CONF_MD5_CHANGED: ${CGROUP_CONF_MD5_CHANGED}"
+
+CONFIG_CHANGED=false
+if [[ "${SLURM_CONF_MD5_CHANGED}" == "true" || "${CGROUP_CONF_MD5_CHANGED}" == "true" ]]; then
+    CONFIG_CHANGED=true
+fi
+
+# =============================================================================
 # Mail stub (Pi OS Lite has no MTA — MailProg must exist or slurmctld fatals)
 # =============================================================================
-log "INFO" "Creating /usr/local/bin/slurm-no-mail stub..."
-tee /usr/local/bin/slurm-no-mail >/dev/null << 'EOF'
+if [[ ! -f /usr/local/bin/slurm-no-mail ]]; then
+    log "INFO" "Creating /usr/local/bin/slurm-no-mail stub..."
+    tee /usr/local/bin/slurm-no-mail >/dev/null << 'EOF'
 #!/bin/sh
 exit 0
 EOF
-chmod +x /usr/local/bin/slurm-no-mail
-log "INFO" "slurm-no-mail stub installed"
+    chmod +x /usr/local/bin/slurm-no-mail
+    log "INFO" "slurm-no-mail stub installed"
+else
+    log "INFO" "slurm-no-mail already exists — skipping"
+fi
 
 # =============================================================================
 # Run slurmctld as root (required — privilege errors with SlurmUser=slurm)
 # =============================================================================
-log "INFO" "Installing slurmctld systemd override (User=root)..."
-mkdir -p /etc/systemd/system/slurmctld.service.d
-cat >/etc/systemd/system/slurmctld.service.d/override.conf << 'EOF'
+if [[ ! -f /etc/systemd/system/slurmctld.service.d/override.conf ]]; then
+    log "INFO" "Installing slurmctld systemd override (User=root)..."
+    mkdir -p /etc/systemd/system/slurmctld.service.d
+    cat >/etc/systemd/system/slurmctld.service.d/override.conf << 'EOF'
 [Service]
 User=root
 Group=root
 EOF
-systemctl daemon-reload
-log "INFO" "slurmctld override installed"
+    systemctl daemon-reload
+    log "INFO" "slurmctld override installed"
+else
+    log "INFO" "slurmctld override already exists — skipping"
+fi
 
 # =============================================================================
 # Distribute configuration to compute nodes
 # =============================================================================
 log "INFO" "Distributing SLURM configuration to compute nodes..."
-
-for node in "${COMPUTE_NODES[@]}"; do
-    if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "${ADMIN_USER}@${node}" true 2>/dev/null; then
-        log "WARN" "Cannot reach ${node} via SSH — skipping config distribution"
-        continue
-    fi
-
-    log "INFO" "Copying config to ${node}..."
-    scp -q "${SLURM_CONF_DIR}/slurm.conf"  "${ADMIN_USER}@${node}:/tmp/slurm.conf"
-    scp -q "${SLURM_CONF_DIR}/cgroup.conf" "${ADMIN_USER}@${node}:/tmp/cgroup.conf"
-
-    ssh "${ADMIN_USER}@${node}" "sudo bash -s" << 'REMOTE_EOF'
+cat > "${SLURM_CONF_DIR}/install.sh" << 'INSTALL_EOF'
+#!/usr/bin/env bash
 set -euo pipefail
 mkdir -p /etc/slurm /var/spool/slurm/d /var/log/slurm
 mv /tmp/slurm.conf  /etc/slurm/slurm.conf
 mv /tmp/cgroup.conf /etc/slurm/cgroup.conf
-chown slurm:slurm /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
+chown root:root /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
 chmod 0644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
 chown slurm:slurm /var/spool/slurm/d /var/log/slurm
 chmod 0755 /var/spool/slurm/d /var/log/slurm
-REMOTE_EOF
+rm -f /tmp/install.sh
+INSTALL_EOF
+# cat > "${SLURM_CONF_DIR}/install.sh" << 'INSTALL_EOF'
+# #!/usr/bin/env bash
+# set -euo pipefail
+# touch /tmp/test.txt
+# chown root:root /tmp/test.txt
+# chmod 0644 /tmp/test.txt
+# rm -f /tmp/install.sh
+# INSTALL_EOF
 
-    log "INFO" "Config installed on ${node}"
+chown admin:admin "${SLURM_CONF_DIR}/install.sh"
+chmod 0755 "${SLURM_CONF_DIR}/install.sh"
+log "INFO" "install.sh written"
+
+if [[ "${CONFIG_CHANGED}" == "true" ]]; then
+    log "INFO" "Distributing SLURM configuration to compute nodes..."
+    for node in "${COMPUTE_NODES[@]}"; do
+        if ! ssh -i "${ADMIN_KEY}" -o ConnectTimeout=5 -o BatchMode=yes "${ADMIN_USER}@${node}" true 2>/dev/null; then
+            log "WARN" "Cannot reach ${node} via SSH — skipping config distribution"
+            continue
+        fi
+
+        log "INFO" "Copying config to ${node}..."
+        scp -i "${ADMIN_KEY}" -q "${SLURM_CONF_DIR}/slurm.conf"  "${ADMIN_USER}@${node}:/tmp/slurm.conf"
+        scp -i "${ADMIN_KEY}" -q "${SLURM_CONF_DIR}/cgroup.conf" "${ADMIN_USER}@${node}:/tmp/cgroup.conf"
+        scp -i "${ADMIN_KEY}" -q "${SLURM_CONF_DIR}/install.sh"  "${ADMIN_USER}@${node}:/tmp/install.sh"
+
+        log "INFO" "Installing config on ${node} (sudo password prompt if needed)..."
+        ssh -t -i "${ADMIN_KEY}" "${ADMIN_USER}@${node}" "sudo bash /tmp/install.sh"
+
+        log "INFO" "Config installed on ${node}"
+    done
+fi
+
+# Remove install.sh from head node
+rm -f "${SLURM_CONF_DIR}/install.sh"
+log "INFO" "install.sh removed from head node"
+
+# =============================================================================
+# Verification 2: compare slurm.conf and cgroup.conf MD5 across all nodes
+# =============================================================================
+log "INFO" "Verifying slurm.conf and cgroup.conf across all nodes..."
+
+for node in "${COMPUTE_NODES[@]}"; do
+    REMOTE_MD5=$(ssh -i "${ADMIN_KEY}" -o BatchMode=yes "${ADMIN_USER}@${node}" "sudo md5sum /etc/slurm/slurm.conf | awk '{print \$1}'" 2>/dev/null || echo "unknown")
+    if [[ "${REMOTE_MD5}" != "${SLURM_CONF_MD5}" ]]; then
+        log "ERROR" "slurm.conf on ${node} is different from the head node"
+        die "slurm.conf on ${node} is different from the head node"
+    fi
+    REMOTE_MD5=$(ssh -i "${ADMIN_KEY}" -o BatchMode=yes "${ADMIN_USER}@${node}" "sudo md5sum /etc/slurm/cgroup.conf | awk '{print \$1}'" 2>/dev/null || echo "unknown")
+    if [[ "${REMOTE_MD5}" != "${CGROUP_CONF_MD5}" ]]; then
+        log "ERROR" "cgroup.conf on ${node} is different from the head node"
+        die "cgroup.conf on ${node} is different from the head node"
+    fi
 done
 
 # =============================================================================
 # Start SLURM services on head node
 # =============================================================================
 log "INFO" "Starting slurmctld (controller)..."
-systemctl enable slurmctld
-systemctl restart slurmctld
-sleep 3
+if [[ "${CONFIG_CHANGED}" == "true" ]]; then
+    systemctl enable slurmctld
+    systemctl restart slurmctld
+    sleep 3
 
-if systemctl is-active --quiet slurmctld; then
-    log "INFO" "slurmctld is running"
-else
-    log "ERROR" "slurmctld failed to start"
-    journalctl -u slurmctld -n 30 | tee -a "${LOG_FILE}"
-    die "slurmctld startup failed"
-fi
+    if systemctl is-active --quiet slurmctld; then
+        log "INFO" "slurmctld is running"
+    else
+        log "ERROR" "slurmctld failed to start"
+        journalctl -u slurmctld -n 30 | tee -a "${LOG_FILE}"
+        die "slurmctld startup failed"
+    fi
 
-log "INFO" "Starting slurmd (compute daemon on head node)..."
-systemctl enable slurmd
-systemctl restart slurmd
-sleep 3
+    log "INFO" "Starting slurmd (compute daemon on head node)..."
+    systemctl enable slurmd
+    systemctl restart slurmd
+    sleep 3
 
-if systemctl is-active --quiet slurmd; then
-    log "INFO" "slurmd is running on pi-node0"
-else
-    log "ERROR" "slurmd failed to start on pi-node0"
-    journalctl -u slurmd -n 30 | tee -a "${LOG_FILE}"
-    die "slurmd startup failed"
+    if systemctl is-active --quiet slurmd; then
+        log "INFO" "slurmd is running on pi-node0"
+    else
+        log "ERROR" "slurmd failed to start on pi-node0"
+        journalctl -u slurmd -n 30 | tee -a "${LOG_FILE}"
+        die "slurmd startup failed"
+    fi
 fi
 
 # =============================================================================
 # Start SLURM on compute nodes
 # =============================================================================
 log "INFO" "Starting slurmd on compute nodes..."
+if [[ "${CONFIG_CHANGED}" == "true" ]]; then
+    for node in "${COMPUTE_NODES[@]}"; do
+        if ! ssh -i "${ADMIN_KEY}" -o ConnectTimeout=5 -o BatchMode=yes "${ADMIN_USER}@${node}" true 2>/dev/null; then
+            log "WARN" "Cannot reach ${node} — skipping slurmd start"
+            continue
+        fi
 
-for node in "${COMPUTE_NODES[@]}"; do
-    if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "${ADMIN_USER}@${node}" true 2>/dev/null; then
-        log "WARN" "Cannot reach ${node} — skipping slurmd start"
-        continue
-    fi
+        ssh -i "${ADMIN_KEY}" "${ADMIN_USER}@${node}" "sudo systemctl enable slurmd && sudo systemctl restart slurmd"
+        sleep 2
 
-    ssh "${ADMIN_USER}@${node}" "sudo systemctl enable slurmd && sudo systemctl restart slurmd"
-    sleep 2
-
-    STATUS=$(ssh "${ADMIN_USER}@${node}" "systemctl is-active slurmd" 2>/dev/null || echo "unknown")
-    if [[ "${STATUS}" == "active" ]]; then
-        log "INFO" "slurmd running on ${node}"
-    else
-        log "WARN" "slurmd status on ${node}: ${STATUS}"
-    fi
-done
+        STATUS=$(ssh -i "${ADMIN_KEY}" "${ADMIN_USER}@${node}" "systemctl is-active slurmd" 2>/dev/null || echo "unknown")
+        if [[ "${STATUS}" == "active" ]]; then
+            log "INFO" "slurmd running on ${node}"
+        else
+            log "WARN" "slurmd status on ${node}: ${STATUS}"
+        fi
+    done
+fi
 
 # =============================================================================
 # Verification

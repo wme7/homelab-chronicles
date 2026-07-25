@@ -157,8 +157,8 @@ done
 log "INFO" "Creating SLURM directories..."
 
 install -d -m 0755 -o slurm -g slurm \
-    /var/spool/slurmctld \
-    /var/spool/slurmd \
+    /var/spool/slurm/ctld \
+    /var/spool/slurm/d \
     /var/log/slurm
 
 # =============================================================================

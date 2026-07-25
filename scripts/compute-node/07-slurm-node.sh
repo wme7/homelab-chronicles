@@ -24,6 +24,11 @@ die() { log "ERROR" "$*"; exit 1; }
 
 [[ "$(id -u)" -eq 0 ]] || die "Must run as root"
 
+case "$(hostname)" in
+    pi-node1|pi-node2|pi-node3) ;;
+    *) die "This script must run on pi-node1, pi-node2, or pi-node3 (got: $(hostname))" ;;
+esac
+
 command -v slurmd &>/dev/null || die "slurmd not installed. Run 01-base-system.sh first."
 systemctl is-active --quiet munge || die "MUNGE is not running. Run 06-munge.sh first."
 
@@ -49,7 +54,7 @@ if [[ ! -f "${SLURM_CONF}" ]]; then
     scp "${ADMIN_USER}@${HEAD_NODE}:/etc/slurm/slurm.conf"  /etc/slurm/slurm.conf
     scp "${ADMIN_USER}@${HEAD_NODE}:/etc/slurm/cgroup.conf" /etc/slurm/cgroup.conf
 
-    chown slurm:slurm /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
+    chown root:root /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
     chmod 0644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf
 
     log "INFO" "SLURM config fetched from ${HEAD_NODE}"
@@ -70,7 +75,7 @@ fi
 # Create SLURM directories
 # =============================================================================
 install -d -m 0755 -o slurm -g slurm \
-    /var/spool/slurmd \
+    /var/spool/slurm/d \
     /var/log/slurm
 
 # =============================================================================
