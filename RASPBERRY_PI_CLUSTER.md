@@ -1,6 +1,8 @@
 # RASPBERRY PI CLUSTER
 by Manuel A. Diaz on June 15, 2026
 
+![Raspberry Pi Cluster](./images/pi_cluster_logo.png)
+
 # Introduction
 
 As a CFD engineer & Researcher, I often need to prototype new ideas and test them quickly. 
@@ -50,16 +52,18 @@ Steps:
 - An initial prompt was manually written [here](./initial/prompt_initial.md). 
 - This prompt was used to generate an initial [guide](./initial/guide_initial.md) (in markdown format) and a set of basic scripts to build the cluster.
 - The guide was reviewed and the scripts were tested manually. Several iterations/, fixes and changes were needed to get the cluster fully operational.
-- The initial prompt was updated with new assumptions and requirements [here](./documents/prompt_final.md).
+- The initial prompt was updated with new assumptions, caveats and requirements [here](./documents/prompt_final.md).
 - The guide is now updated with the final version [here](./documents/guide.md) and its companion scripts [here](./scripts/scripts.md).
 
 # Results
 
+![Raspberry Pi Cluster](./images/pi_cluster_status.png)
+
 The final results of this project are the following:
 
 - A guide (in markdown format) to build the cluster.
-- A set of fully automated scripts to build the cluster.
-- A cluster that is fully operational.
+- A set of fully automated scripts to (re)build and test the cluster.
+- A cluster that is fully operational and ready to be used for prototyping.
 
 > __Note__: The guide and scripts are available [here](./documents/guide.md) and [here](./scripts/scripts.md).
 
@@ -67,4 +71,4 @@ The final results of this project are the following:
 
 # Final Thoughts
 
-This project has been a great learning experience. It has been a challenge to get the cluster fully operational, but also shows how important the quality of the prompt is to get the desired results.
+It has been a challenge to get the cluster fully operational. As a result, It have learned a lot about the Raspberry Pi hardware and software stack, and how to configure and operate a SLURM cluster. But also shows how important the quality of the prompt is to get the desired results.
